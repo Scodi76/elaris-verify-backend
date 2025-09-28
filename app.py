@@ -39,7 +39,6 @@ def verify_signature(main_file, sig_file):
         sig_file.seek(0)
 
         actual_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-
         return expected_hash == actual_hash
     except Exception as e:
         print("Fehler bei verify_signature:", e)
@@ -55,7 +54,7 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "1.1",
+        "version": "1.2",
         "info": "Backend zur Speicherung und Signaturprüfung der Elaris-Freigabe"
     })
 
@@ -108,6 +107,44 @@ def upload_koda():
         "koda_verified": True,
         "message": "KoDa-Datei erfolgreich geprüft und signiert verifiziert ✅"
     }), 200
+
+
+# ---------------------------
+# ✅ Kombinierte Prüf-Route
+# ---------------------------
+@app.route("/verify", methods=["POST"])
+def verify_combined():
+    """
+    Kombinierte Prüf- und Speicherroute.
+    Wird von ChatGPT oder dem Client aufgerufen,
+    um Status abzufragen oder zu aktualisieren.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        state = load_state()
+
+        # Optional: Update-Trigger falls GPT oder Frontend etwas übergibt
+        if "hs_verified" in data:
+            state["hs_verified"] = bool(data["hs_verified"])
+        if "koda_verified" in data:
+            state["koda_verified"] = bool(data["koda_verified"])
+
+        state["last_update"] = datetime.utcnow().isoformat()
+        save_state(state)
+
+        return jsonify({
+            "status": "ok",
+            "hs_verified": state["hs_verified"],
+            "koda_verified": state["koda_verified"],
+            "last_update": state["last_update"],
+            "message": "Status erfolgreich geprüft oder aktualisiert ✅"
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 
 @app.route("/reset", methods=["POST", "GET"])
