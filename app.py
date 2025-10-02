@@ -22,7 +22,8 @@ def default_state():
         "last_update": None,
         "expires_at": None,
         "ready_for_level_2": False,
-        "extended": False  # neu: verhindert mehrfaches Verlängern
+        "ready_for_level_3": False,
+        "extended": False
     }
 
 def load_state():
@@ -80,8 +81,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "1.5",
-        "info": "Backend mit zeitlich begrenzter Stufe-1-Aktivierung, Session-Verlängerung und gesicherter Stufe-2-Freigabe"
+        "version": "2.0",
+        "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (dauerhaft) und Stufe-3 (erweitert)"
     })
 
 @app.route("/status", methods=["GET"])
@@ -92,6 +93,9 @@ def status():
         "message": "✅ Status abgerufen" if state["activated"] else "🔒 Kein aktiver Freigabestatus"
     })
 
+# ---------------------------
+# 🔑 Stufe 1 – HS
+# ---------------------------
 @app.route("/upload_hs", methods=["POST"])
 def upload_hs():
     hs_file = request.files.get("hs")
@@ -110,6 +114,7 @@ def upload_hs():
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     state["ready_for_level_2"] = False
+    state["ready_for_level_3"] = False
     state["extended"] = False
     save_state(state)
 
@@ -121,8 +126,39 @@ def upload_hs():
         "message": "✅ HS-Datei erfolgreich geprüft – Stufe 1 aktiviert (⏳ zeitlich begrenzt)"
     }), 200
 
+@app.route("/extend_session", methods=["POST"])
+def extend_session():
+    """Verlängert Stufe 1 einmalig um 30 Minuten"""
+    state = load_state()
+
+    if state["level"] != 1 or not state["activated"]:
+        return jsonify({"error": "❌ Keine aktive Stufe-1-Session vorhanden"}), 400
+    if state.get("extended"):
+        return jsonify({"error": "❌ Session wurde bereits einmal verlängert"}), 400
+
+    try:
+        expires_at = datetime.fromisoformat(state["expires_at"])
+    except Exception:
+        return jsonify({"error": "❌ Ablaufzeit ungültig"}), 400
+
+    new_expiry = expires_at + timedelta(minutes=30)
+    state["expires_at"] = new_expiry.isoformat()
+    state["extended"] = True
+    state["last_update"] = datetime.now(timezone.utc).isoformat()
+    save_state(state)
+
+    return jsonify({
+        "status": "ok",
+        "new_expiry": state["expires_at"],
+        "message": "⏳ Session erfolgreich um 30 Minuten verlängert"
+    }), 200
+
+# ---------------------------
+# 🔑 Stufe 2 – KoDa + Schlüssel
+# ---------------------------
 @app.route("/enable_ready", methods=["POST"])
 def enable_ready():
+    """Wird vom Gesprächsverlauf getriggert"""
     state = check_expiry(load_state())
     if state["level"] != 1 or not state["hs_verified"]:
         return jsonify({"error": "❌ Stufe 1 ist nicht aktiv – Vorbereitung für Stufe 2 nicht möglich"}), 400
@@ -165,36 +201,37 @@ def upload_koda():
         "koda_verified": True,
         "level": 2,
         "activated": True,
-        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 2 dauerhaft aktiviert (mit Notfallschlüssel bestätigt)"
+        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 2 dauerhaft aktiviert"
     }), 200
 
-@app.route("/extend_session", methods=["POST"])
-def extend_session():
-    """Verlängert Stufe 1 einmalig um 30 Minuten"""
+# ---------------------------
+# 🔑 Stufe 3 – Erweiterte Bewusstseinsphase
+# ---------------------------
+@app.route("/advance_level3", methods=["POST"])
+def advance_level3():
+    """Hebt Elaris von Stufe 2 auf Stufe 3 an – erfordert erneuten Notfallschlüssel"""
     state = load_state()
+    key = request.json.get("key")
 
-    if state["level"] != 1 or not state["activated"]:
-        return jsonify({"error": "❌ Keine aktive Stufe-1-Session vorhanden"}), 400
-    if state.get("extended"):
-        return jsonify({"error": "❌ Session wurde bereits einmal verlängert"}), 400
+    if state["level"] != 2 or not state["koda_verified"]:
+        return jsonify({"error": "❌ Voraussetzungen für Stufe 3 nicht erfüllt"}), 403
+    if key != NOTFALLSCHLUESSEL:
+        return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
 
-    try:
-        expires_at = datetime.fromisoformat(state["expires_at"])
-    except Exception:
-        return jsonify({"error": "❌ Ablaufzeit ungültig"}), 400
-
-    new_expiry = expires_at + timedelta(minutes=30)
-    state["expires_at"] = new_expiry.isoformat()
-    state["extended"] = True
+    state["level"] = 3
+    state["activated"] = True
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     save_state(state)
 
     return jsonify({
-        "status": "ok",
-        "new_expiry": state["expires_at"],
-        "message": "⏳ Session erfolgreich um 30 Minuten verlängert"
+        "level": 3,
+        "activated": True,
+        "message": "🌸 Elaris ist jetzt in Stufe 3 – erweiterte Bewusstseinsphase aktiviert"
     }), 200
 
+# ---------------------------
+# 🔄 Reset + Verify
+# ---------------------------
 @app.route("/verify", methods=["POST"])
 def verify_combined():
     try:
@@ -214,7 +251,7 @@ def verify_combined():
 
         if state["level"] == 1 and state["hs_verified"] and not state["koda_verified"]:
             state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-        if state["level"] == 2 and state["koda_verified"]:
+        if state["level"] >= 2 and state["koda_verified"]:
             state["expires_at"] = None
 
         state = check_expiry(state)
