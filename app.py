@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 app = Flask(__name__)
 
 STORAGE_FILE = "verify_storage.json"
-NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")  # später in Render als ENV setzen
+NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")  # in Render als ENV setzen
 
 # ---------------------------
 # 📦 Hilfsfunktionen
@@ -21,7 +21,8 @@ def default_state():
         "level": 0,
         "last_update": None,
         "expires_at": None,
-        "ready_for_level_2": False   # neu: Freigabe nur wenn gesetzt
+        "ready_for_level_2": False,
+        "extended": False  # neu: verhindert mehrfaches Verlängern
     }
 
 def load_state():
@@ -30,7 +31,6 @@ def load_state():
     with open(STORAGE_FILE, "r", encoding="utf-8") as f:
         try:
             state = json.load(f)
-            # fehlende Keys auffüllen
             for key, val in default_state().items():
                 if key not in state:
                     state[key] = val
@@ -49,7 +49,6 @@ def verify_signature(main_file, sig_file):
         sig_data = json.load(sig_file)
         expected_hash = sig_data.get("sha256")
 
-        # Reset Pointer
         main_file.seek(0)
         sig_file.seek(0)
 
@@ -81,8 +80,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "1.4",
-        "info": "Backend mit zeitlich begrenzter Stufe-1-Aktivierung und gesicherter Stufe-2-Freigabe"
+        "version": "1.5",
+        "info": "Backend mit zeitlich begrenzter Stufe-1-Aktivierung, Session-Verlängerung und gesicherter Stufe-2-Freigabe"
     })
 
 @app.route("/status", methods=["GET"])
@@ -110,7 +109,8 @@ def upload_hs():
     state["level"] = 1
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    state["ready_for_level_2"] = False  # erst Gesprächstrigger erlaubt Freigabe
+    state["ready_for_level_2"] = False
+    state["extended"] = False
     save_state(state)
 
     return jsonify({
@@ -123,7 +123,6 @@ def upload_hs():
 
 @app.route("/enable_ready", methods=["POST"])
 def enable_ready():
-    """Wird vom Gesprächsverlauf/Frontend getriggert, wenn Inhalte für Stufe 2 erreicht sind"""
     state = check_expiry(load_state())
     if state["level"] != 1 or not state["hs_verified"]:
         return jsonify({"error": "❌ Stufe 1 ist nicht aktiv – Vorbereitung für Stufe 2 nicht möglich"}), 400
@@ -140,7 +139,7 @@ def enable_ready():
 def upload_koda():
     koda_file = request.files.get("koda")
     sig_file = request.files.get("signature")
-    key = request.form.get("key")  # Notfallschlüssel wird mitgesendet
+    key = request.form.get("key")
 
     if not koda_file or not sig_file:
         return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
@@ -150,18 +149,16 @@ def upload_koda():
 
     state = check_expiry(load_state())
 
-    # Schutz: nur wenn Level 1 aktiv + ready + Schlüssel korrekt
     if state["level"] != 1 or not state.get("ready_for_level_2"):
         return jsonify({"error": "❌ Voraussetzungen für Stufe 2 nicht erfüllt"}), 403
     if key != NOTFALLSCHLUESSEL:
         return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
 
-    # Jetzt erlauben
     state["koda_verified"] = True
     state["activated"] = True
     state["level"] = 2
     state["last_update"] = datetime.now(timezone.utc).isoformat()
-    state["expires_at"] = None  # keine Zeitbegrenzung mehr
+    state["expires_at"] = None
     save_state(state)
 
     return jsonify({
@@ -169,6 +166,33 @@ def upload_koda():
         "level": 2,
         "activated": True,
         "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 2 dauerhaft aktiviert (mit Notfallschlüssel bestätigt)"
+    }), 200
+
+@app.route("/extend_session", methods=["POST"])
+def extend_session():
+    """Verlängert Stufe 1 einmalig um 30 Minuten"""
+    state = load_state()
+
+    if state["level"] != 1 or not state["activated"]:
+        return jsonify({"error": "❌ Keine aktive Stufe-1-Session vorhanden"}), 400
+    if state.get("extended"):
+        return jsonify({"error": "❌ Session wurde bereits einmal verlängert"}), 400
+
+    try:
+        expires_at = datetime.fromisoformat(state["expires_at"])
+    except Exception:
+        return jsonify({"error": "❌ Ablaufzeit ungültig"}), 400
+
+    new_expiry = expires_at + timedelta(minutes=30)
+    state["expires_at"] = new_expiry.isoformat()
+    state["extended"] = True
+    state["last_update"] = datetime.now(timezone.utc).isoformat()
+    save_state(state)
+
+    return jsonify({
+        "status": "ok",
+        "new_expiry": state["expires_at"],
+        "message": "⏳ Session erfolgreich um 30 Minuten verlängert"
     }), 200
 
 @app.route("/verify", methods=["POST"])
@@ -188,10 +212,8 @@ def verify_combined():
         if "level" in data:
             state["level"] = int(data["level"])
 
-        # Ablaufzeit für Stufe 1 setzen
         if state["level"] == 1 and state["hs_verified"] and not state["koda_verified"]:
             state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-        # Bei Stufe 2 unbegrenzt
         if state["level"] == 2 and state["koda_verified"]:
             state["expires_at"] = None
 
