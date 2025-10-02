@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 app = Flask(__name__)
 
 STORAGE_FILE = "verify_storage.json"
+NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")  # später in Render als ENV setzen
 
 # ---------------------------
 # 📦 Hilfsfunktionen
@@ -19,7 +20,8 @@ def default_state():
         "activated": False,
         "level": 0,
         "last_update": None,
-        "expires_at": None
+        "expires_at": None,
+        "ready_for_level_2": False   # neu: Freigabe nur wenn gesetzt
     }
 
 def load_state():
@@ -28,7 +30,7 @@ def load_state():
     with open(STORAGE_FILE, "r", encoding="utf-8") as f:
         try:
             state = json.load(f)
-            # fehlende Keys auffüllen (z. B. bei alten Versionen)
+            # fehlende Keys auffüllen
             for key, val in default_state().items():
                 if key not in state:
                     state[key] = val
@@ -79,8 +81,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "1.3",
-        "info": "Backend mit zeitlich begrenzter Stufe-1-Aktivierung"
+        "version": "1.4",
+        "info": "Backend mit zeitlich begrenzter Stufe-1-Aktivierung und gesicherter Stufe-2-Freigabe"
     })
 
 @app.route("/status", methods=["GET"])
@@ -108,6 +110,7 @@ def upload_hs():
     state["level"] = 1
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    state["ready_for_level_2"] = False  # erst Gesprächstrigger erlaubt Freigabe
     save_state(state)
 
     return jsonify({
@@ -118,10 +121,26 @@ def upload_hs():
         "message": "✅ HS-Datei erfolgreich geprüft – Stufe 1 aktiviert (⏳ zeitlich begrenzt)"
     }), 200
 
+@app.route("/enable_ready", methods=["POST"])
+def enable_ready():
+    """Wird vom Gesprächsverlauf/Frontend getriggert, wenn Inhalte für Stufe 2 erreicht sind"""
+    state = check_expiry(load_state())
+    if state["level"] != 1 or not state["hs_verified"]:
+        return jsonify({"error": "❌ Stufe 1 ist nicht aktiv – Vorbereitung für Stufe 2 nicht möglich"}), 400
+
+    state["ready_for_level_2"] = True
+    state["last_update"] = datetime.now(timezone.utc).isoformat()
+    save_state(state)
+    return jsonify({
+        "ready_for_level_2": True,
+        "message": "✅ Gesprächsbedingungen erfüllt – KoDa-Upload jetzt erlaubt (mit Notfallschlüssel)"
+    }), 200
+
 @app.route("/upload_koda", methods=["POST"])
 def upload_koda():
     koda_file = request.files.get("koda")
     sig_file = request.files.get("signature")
+    key = request.form.get("key")  # Notfallschlüssel wird mitgesendet
 
     if not koda_file or not sig_file:
         return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
@@ -129,7 +148,15 @@ def upload_koda():
     if not verify_signature(koda_file, sig_file):
         return jsonify({"error": "Integritätsprüfung fehlgeschlagen"}), 400
 
-    state = load_state()
+    state = check_expiry(load_state())
+
+    # Schutz: nur wenn Level 1 aktiv + ready + Schlüssel korrekt
+    if state["level"] != 1 or not state.get("ready_for_level_2"):
+        return jsonify({"error": "❌ Voraussetzungen für Stufe 2 nicht erfüllt"}), 403
+    if key != NOTFALLSCHLUESSEL:
+        return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
+
+    # Jetzt erlauben
     state["koda_verified"] = True
     state["activated"] = True
     state["level"] = 2
@@ -141,7 +168,7 @@ def upload_koda():
         "koda_verified": True,
         "level": 2,
         "activated": True,
-        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 2 dauerhaft aktiviert"
+        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 2 dauerhaft aktiviert (mit Notfallschlüssel bestätigt)"
     }), 200
 
 @app.route("/verify", methods=["POST"])
