@@ -12,7 +12,8 @@ app = Flask(__name__)
 # ---------------------------
 STORAGE_FILE = "verify_storage.json"
 BACKUP_FILE = "verify_storage_backup.json"
-TOKEN_FILE = "verify_token.json"
+TOKEN_FILE_JSON = "verify_token.json"
+TOKEN_FILE_TXT = "verify_token.txt"
 NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")
 
 TRIGGERS = [
@@ -35,54 +36,76 @@ def default_state():
         "last_update": None,
         "expires_at": None,
         "ready_for_level_2": False,
+        "ready_for_level_3": False,
         "extended": False
     }
 
 def load_state():
-    """Lädt Zustand oder Token"""
-    if os.path.exists(TOKEN_FILE):
+    """Lädt Zustand aus Token, Datei oder Backup"""
+    # 1️⃣ Prüfe auf Token
+    if os.path.exists(TOKEN_FILE_JSON):
         try:
-            with open(TOKEN_FILE, "r", encoding="utf-8") as f:
-                token_data = json.load(f)
-                encoded = token_data.get("token")
-                if encoded:
-                    decoded = base64.b64decode(encoded.encode()).decode()
-                    state = json.loads(decoded)
-                    return state
-        except Exception:
-            pass
+            with open(TOKEN_FILE_JSON, "r", encoding="utf-8") as f:
+                token_state = json.load(f)
+                print("🔄 Zustand aus Token wiederhergestellt.")
+                return token_state
+        except Exception as e:
+            print("⚠️ Token konnte nicht geladen werden:", e)
+
+    # 2️⃣ Prüfe Standarddateien
     for file in [STORAGE_FILE, BACKUP_FILE]:
         if os.path.exists(file):
             try:
                 with open(file, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    state = json.load(f)
+                    for key, val in default_state().items():
+                        if key not in state:
+                            state[key] = val
+                    return state
             except Exception:
                 continue
+
+    # 3️⃣ Wenn nichts da: Default
     return default_state()
 
 def save_state(state):
-    """Speichert Zustand und Token"""
+    """Speichert Zustand in JSON + Backup"""
     try:
-        encoded = base64.b64encode(json.dumps(state).encode()).decode()
         with open(STORAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
         with open(BACKUP_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
-        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-            json.dump({"token": encoded}, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print("❌ Fehler beim Speichern:", e)
+
+def create_token(state):
+    """Erzeugt einen Token nach erfolgreicher Stufe 1"""
+    try:
+        token_data = json.dumps(state, ensure_ascii=False, indent=2)
+        token_b64 = base64.b64encode(token_data.encode("utf-8")).decode("utf-8")
+
+        with open(TOKEN_FILE_JSON, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        with open(TOKEN_FILE_TXT, "w", encoding="utf-8") as f:
+            f.write(token_b64)
+
+        print("💾 Token generiert und gespeichert.")
+    except Exception as e:
+        print("⚠️ Token-Erstellung fehlgeschlagen:", e)
 
 def verify_signature(main_file, sig_file):
     try:
         content = main_file.read().decode("utf-8")
         sig_data = json.load(sig_file)
         expected_hash = sig_data.get("sha256")
+
         main_file.seek(0)
         sig_file.seek(0)
+
         actual_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return expected_hash == actual_hash
-    except Exception:
+    except Exception as e:
+        print("Fehler bei verify_signature:", e)
         return False
 
 def check_expiry(state):
@@ -91,9 +114,11 @@ def check_expiry(state):
             expires_at = datetime.fromisoformat(state["expires_at"])
             if datetime.now(timezone.utc) > expires_at:
                 print("⏳ Ablauf erkannt – Reset ausgeführt.")
-                return default_state()
-        except Exception:
-            pass
+                state = default_state()
+                state["last_update"] = datetime.now(timezone.utc).isoformat()
+                save_state(state)
+        except Exception as e:
+            print("Fehler bei Ablaufprüfung:", e)
     return state
 
 # ---------------------------
@@ -103,8 +128,9 @@ def check_expiry(state):
 def index():
     return jsonify({
         "service": "Elaris Verify Backend",
-        "version": "3.9",
-        "info": "Mit Token-Archivierung und Status-Wiederherstellung"
+        "version": "4.0",
+        "status": "online",
+        "info": "HS/KoDa-Prüfung mit Token-Speicherung (ab Stufe 1)"
     })
 
 @app.route("/status", methods=["GET"])
@@ -112,30 +138,34 @@ def status():
     state = check_expiry(load_state())
     return jsonify({
         "state": state,
-        "message": "✅ Aktiviert" if state["activated"] else "🔒 Kein aktiver Freigabestatus"
+        "message": "✅ Aktiviert" if state["activated"] else "🔒 Kein aktiver Status erkannt"
     })
 
 # ---------------------------
-# 🔑 Upload & Prüfung
+# 🔑 HS & KoDa Upload
 # ---------------------------
 @app.route("/upload_hs", methods=["POST"])
 def upload_hs():
     hs_file = request.files.get("hs")
     sig_file = request.files.get("signature")
+
     if not hs_file or not sig_file:
         return jsonify({"error": "HS-Datei oder Signatur fehlt"}), 400
     if not verify_signature(hs_file, sig_file):
         return jsonify({"error": "Integritätsprüfung fehlgeschlagen"}), 400
+
     state = load_state()
     state["hs_verified"] = True
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     save_state(state)
-    return jsonify({"message": "✅ HS geprüft – warte auf KoDa"}), 200
+
+    return jsonify({"hs_verified": True, "message": "✅ HS-Datei geprüft"}), 200
 
 @app.route("/upload_koda", methods=["POST"])
 def upload_koda():
     koda_file = request.files.get("koda")
     sig_file = request.files.get("signature")
+
     if not koda_file or not sig_file:
         return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
     if not verify_signature(koda_file, sig_file):
@@ -143,64 +173,59 @@ def upload_koda():
 
     state = check_expiry(load_state())
     if not state["hs_verified"]:
-        return jsonify({"error": "❌ HS zuerst prüfen"}), 400
+        return jsonify({"error": "HS muss zuerst geprüft werden"}), 400
 
     state["koda_verified"] = True
     state["activated"] = True
     state["level"] = 1
-    state["integrity_verified"] = True
     state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    state["last_update"] = datetime.now(timezone.utc).isoformat()
     save_state(state)
 
+    # 🔐 Neu: Token sofort erzeugen
+    create_token(state)
+
     return jsonify({
-        "message": "✅ HS & KoDa geprüft – Stufe 1 aktiviert (temporär)"
+        "hs_verified": True,
+        "koda_verified": True,
+        "level": 1,
+        "activated": True,
+        "message": "✅ HS + KoDa geprüft – Stufe 1 aktiviert (Token gespeichert)"
     }), 200
 
 # ---------------------------
-# 💾 Archivierung & Token
+# 🎯 Trigger-Erkennung
 # ---------------------------
-@app.route("/archive", methods=["POST"])
-def archive_state():
-    """Archiviert aktuellen Zustand in Token"""
-    state = load_state()
-    if not state["activated"]:
-        return jsonify({"error": "❌ Kein aktiver Zustand vorhanden"}), 400
-    save_state(state)
-    encoded = base64.b64encode(json.dumps(state).encode()).decode()
-    return jsonify({
-        "message": "💾 Zustand archiviert",
-        "token": encoded
-    }), 200
-
-@app.route("/restore", methods=["POST"])
-def restore_state():
-    """Wiederherstellung per Token"""
+@app.route("/chat", methods=["POST"])
+def chat_message():
     data = request.get_json(silent=True) or {}
-    token = data.get("token")
-    if not token:
-        return jsonify({"error": "❌ Kein Token übermittelt"}), 400
-    try:
-        decoded = base64.b64decode(token.encode()).decode()
-        state = json.loads(decoded)
+    msg = data.get("message", "").strip().lower()
+    state = check_expiry(load_state())
+
+    response = {"message": f"Elaris empfängt: {msg}", "triggered": False}
+
+    if state["level"] == 1 and any(trigger in msg for trigger in TRIGGERS):
+        state["ready_for_level_2"] = True
+        state["last_update"] = datetime.now(timezone.utc).isoformat()
         save_state(state)
-        return jsonify({
-            "message": "📂 Archivierter Zustand erfolgreich wiederhergestellt",
-            "state": state
-        }), 200
-    except Exception as e:
-        return jsonify({"error": f"Token ungültig: {str(e)}"}), 400
+        response["triggered"] = True
+        response["system"] = "⚡ Trigger erkannt – Stufe 2 Freigabe möglich!"
+    return jsonify(response), 200
 
 # ---------------------------
 # 🔄 Reset
 # ---------------------------
-@app.route("/reset", methods=["POST"])
+@app.route("/reset", methods=["POST", "GET"])
 def reset_state():
     state = default_state()
     save_state(state)
-    return jsonify({"message": "🔄 System zurückgesetzt"}), 200
+    for f in [TOKEN_FILE_JSON, TOKEN_FILE_TXT]:
+        if os.path.exists(f):
+            os.remove(f)
+    return jsonify({"message": "🔄 Reset ausgeführt"}), 200
 
 # ---------------------------
-# 🚀 Start
+# 🚀 Start (lokal / Render)
 # ---------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
