@@ -25,8 +25,19 @@ def status():
 # --- ✅ VERIFY ---
 @app.route("/verify", methods=["POST"])
 def verify():
+    """
+    Empfängt den Verifikationsstatus und aktualisiert den internen Speicher.
+    Stellt sicher, dass IMMER eine JSON-Antwort zurückkommt.
+    """
     try:
-        data = request.get_json()
+        data = request.get_json(force=True, silent=True) or {}
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "Keine oder ungültige JSON-Daten empfangen."
+            }), 400
+
+        # Aktualisierung des Status
         system_status.update({
             "hs_verified": data.get("hs_verified", False),
             "koda_verified": data.get("koda_verified", False),
@@ -36,20 +47,26 @@ def verify():
             "last_update": datetime.utcnow().isoformat()
         })
 
+        # Erfolgreiche Bestätigung zurückgeben
         return jsonify({
             "status": "success",
-            "message": "Verification data received and stored.",
-            "details": system_status
+            "message": "Verifikationsdaten empfangen und erfolgreich gespeichert.",
+            "received_data": data,
+            "current_status": system_status
         }), 200
+
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({
+            "status": "error",
+            "message": f"Unerwarteter Fehler: {str(e)}"
+        }), 500
 
 
 # --- ✅ RESET ---
 @app.route("/reset", methods=["POST"])
 def reset():
     """
-    Setzt den gesamten Freigabestatus zurück.
+    Setzt den gesamten Freigabestatus vollständig zurück.
     """
     try:
         global system_status
@@ -64,14 +81,14 @@ def reset():
 
         return jsonify({
             "status": "success",
-            "message": "System reset completed. All flags set to default.",
+            "message": "System wurde vollständig zurückgesetzt.",
             "details": system_status
         }), 200
 
     except Exception as e:
         return jsonify({
             "status": "error",
-            "message": f"Reset failed: {str(e)}"
+            "message": f"Reset fehlgeschlagen: {str(e)}"
         }), 500
 
 
@@ -79,7 +96,7 @@ def reset():
 @app.route("/", methods=["GET"])
 def root():
     return jsonify({
-        "message": "Elaris Verify Backend is running ✅",
+        "message": "Elaris Verify Backend läuft stabil ✅",
         "available_endpoints": ["/status", "/verify", "/reset"]
     }), 200
 
