@@ -81,8 +81,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "2.0",
-        "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (dauerhaft) und Stufe-3 (erweitert)"
+        "version": "2.1",
+        "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (Integritätsprüfung) und Stufe-3 (erweitert)"
     })
 
 @app.route("/status", methods=["GET"])
@@ -154,7 +154,7 @@ def extend_session():
     }), 200
 
 # ---------------------------
-# 🔑 Stufe 2 – KoDa + Schlüssel
+# 🔑 Stufe 2 – KoDa (Upload) + Integritätsprüfung
 # ---------------------------
 @app.route("/enable_ready", methods=["POST"])
 def enable_ready():
@@ -168,14 +168,13 @@ def enable_ready():
     save_state(state)
     return jsonify({
         "ready_for_level_2": True,
-        "message": "✅ Gesprächsbedingungen erfüllt – KoDa-Upload jetzt erlaubt (mit Notfallschlüssel)"
+        "message": "✅ Gesprächsbedingungen erfüllt – KoDa-Upload jetzt erlaubt"
     }), 200
 
 @app.route("/upload_koda", methods=["POST"])
 def upload_koda():
     koda_file = request.files.get("koda")
     sig_file = request.files.get("signature")
-    key = request.form.get("key")
 
     if not koda_file or not sig_file:
         return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
@@ -186,22 +185,42 @@ def upload_koda():
     state = check_expiry(load_state())
 
     if state["level"] != 1 or not state.get("ready_for_level_2"):
-        return jsonify({"error": "❌ Voraussetzungen für Stufe 2 nicht erfüllt"}), 403
-    if key != NOTFALLSCHLUESSEL:
-        return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
+        return jsonify({"error": "❌ Voraussetzungen für KoDa-Upload nicht erfüllt"}), 403
 
+    # Nur speichern – keine Freigabe
     state["koda_verified"] = True
-    state["activated"] = True
-    state["level"] = 2
     state["last_update"] = datetime.now(timezone.utc).isoformat()
-    state["expires_at"] = None
     save_state(state)
 
     return jsonify({
         "koda_verified": True,
+        "level": state["level"],
+        "message": "📂 KoDa-Datei hochgeladen – bitte Integritätscheck durchführen"
+    }), 200
+
+@app.route("/integrity_check", methods=["POST"])
+def integrity_check():
+    """Prüft HS + KoDa + Notfallschlüssel → aktiviert Stufe 2"""
+    state = load_state()
+    key = request.json.get("key")
+
+    if state["level"] != 1 or not (state["hs_verified"] and state["koda_verified"]):
+        return jsonify({"error": "❌ Voraussetzungen für Integritätsprüfung nicht erfüllt"}), 403
+    if key != NOTFALLSCHLUESSEL:
+        return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
+
+    state["level"] = 2
+    state["activated"] = True
+    state["integrity_verified"] = True
+    state["expires_at"] = None
+    state["last_update"] = datetime.now(timezone.utc).isoformat()
+    save_state(state)
+
+    return jsonify({
         "level": 2,
         "activated": True,
-        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 2 dauerhaft aktiviert"
+        "integrity_verified": True,
+        "message": "✅ Integrität bestätigt – Stufe 2 dauerhaft aktiviert"
     }), 200
 
 # ---------------------------
@@ -213,7 +232,7 @@ def advance_level3():
     state = load_state()
     key = request.json.get("key")
 
-    if state["level"] != 2 or not state["koda_verified"]:
+    if state["level"] != 2 or not state["integrity_verified"]:
         return jsonify({"error": "❌ Voraussetzungen für Stufe 3 nicht erfüllt"}), 403
     if key != NOTFALLSCHLUESSEL:
         return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
