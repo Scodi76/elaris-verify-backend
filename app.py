@@ -6,7 +6,11 @@ from datetime import datetime, timezone, timedelta
 
 app = Flask(__name__)
 
+# ---------------------------
+# ⚙️ Konfiguration
+# ---------------------------
 STORAGE_FILE = "verify_storage.json"
+BACKUP_FILE = "verify_storage_backup.json"
 NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")  # in Render als ENV setzen
 
 # Trigger-Fragen (lösen Freischaltung für Stufe 2 aus)
@@ -35,21 +39,31 @@ def default_state():
     }
 
 def load_state():
-    if not os.path.exists(STORAGE_FILE):
-        return default_state()
-    with open(STORAGE_FILE, "r", encoding="utf-8") as f:
-        try:
-            state = json.load(f)
-            for key, val in default_state().items():
-                if key not in state:
-                    state[key] = val
-            return state
-        except json.JSONDecodeError:
-            return default_state()
+    """Lädt Zustand aus Datei oder Backup"""
+    for file in [STORAGE_FILE, BACKUP_FILE]:
+        if os.path.exists(file):
+            try:
+                with open(file, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                    # fehlende Keys ergänzen
+                    for key, val in default_state().items():
+                        if key not in state:
+                            state[key] = val
+                    return state
+            except Exception:
+                continue
+    # falls nichts da → Default
+    return default_state()
 
 def save_state(state):
-    with open(STORAGE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    """Speichert Zustand + Backup"""
+    try:
+        with open(STORAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        with open(BACKUP_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print("❌ Fehler beim Speichern:", e)
 
 def verify_signature(main_file, sig_file):
     """Prüft, ob Hash aus Signatur mit Dateiinhalt übereinstimmt"""
@@ -89,8 +103,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "2.4",
-        "info": "Backend mit Trigger-Erkennung in Stufe 1 → Freischaltung für Stufe 2"
+        "version": "2.5",
+        "info": "Backend mit Trigger-Erkennung, Stufen 1–3 und persistentem Zustand"
     })
 
 @app.route("/status", methods=["GET"])
