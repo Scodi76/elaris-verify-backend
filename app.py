@@ -53,7 +53,8 @@ def default_state():
         "triggers_found": [],
         "free_inputs": 0,
         "external_failed": False,
-        "warned": False
+        "warned": False,
+        "restored": False
     }
 
 def load_state():
@@ -131,17 +132,34 @@ def check_expiry(state):
     return state
 
 # =====================================================
-# 🌐 API
+# 🌐 API-ENDPUNKTE
 # =====================================================
 
 @app.route("/")
 def index():
+    state = check_expiry(load_state())
+
+    # Automatische Wiederherstellung
+    if state.get("activated"):
+        state["restored"] = True
+        save_state(state)
+        return jsonify({
+            "service": "Elaris Verify Backend",
+            "status": "online",
+            "version": "3.3.5",
+            "data_dir": DATA_DIR,
+            "message": "📦 Aktivierung erkannt – Wiederherstellung erfolgreich",
+            "restored_state": state,
+            "info": "Der letzte Zustand wurde automatisch geladen."
+        })
+
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "3.3.3",
+        "version": "3.3.5",
         "data_dir": DATA_DIR,
-        "info": "Stabil mit lokalem Auto-Save, Fallback bei 404-Fehlern"
+        "message": "🔒 Kein aktiver Freigabestatus – neuer Prozess erforderlich",
+        "info": "Automatische Wiederherstellung aktiviert."
     })
 
 @app.route("/status", methods=["GET"])
@@ -195,6 +213,7 @@ def upload_koda():
         "ready_for_level_2": False,
         "extended": False,
         "external_failed": False,
+        "restored": False,
         "last_update": datetime.now(timezone.utc).isoformat()
     })
     save_state(state)
@@ -204,32 +223,8 @@ def upload_koda():
         "koda_verified": True,
         "activated": True,
         "level": 1,
-        "message": "✅ KoDa geprüft – Stufe 1 aktiv (⏳ 60 Min, Auto-Save lokal)"
+        "message": "✅ KoDa geprüft – Stufe 1 aktiv (⏳ 60 Min)"
     }), 200
-
-# =====================================================
-# 🧠 Auto-Save / Verify Fallback
-# =====================================================
-
-@app.route("/verify", methods=["POST"])
-def verify_fallback():
-    try:
-        data = request.get_json(silent=True) or {}
-        state = load_state()
-
-        # externe Speicherung fehlgeschlagen → lokal sichern
-        state["external_failed"] = True
-        state["last_update"] = datetime.now(timezone.utc).isoformat()
-        save_state(state)
-
-        return jsonify({
-            "status": "saved_local",
-            "state": state,
-            "message": "⚠️ Externe Speicherung fehlgeschlagen – Zustand lokal gesichert."
-        }), 200
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 # =====================================================
 # 🚀 START
