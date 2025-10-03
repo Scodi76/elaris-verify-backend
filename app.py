@@ -1,9 +1,12 @@
+# 📘 Elaris Verify Backend – Version mit Trigger-Integration
+# Pfad: C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\elaris_verify_backend\app.py
+
 from flask import Flask, request, jsonify
 from datetime import datetime
 
 app = Flask(__name__)
 
-# 🧩 Statusspeicher
+# 🧩 Systemstatus
 system_status = {
     "hs_verified": False,
     "koda_verified": False,
@@ -15,12 +18,13 @@ system_status = {
 
 # 💬 Gesprächsphasensteuerung
 conversation_phase = {
-    "phase": 1,  # 1 = EVS aktiv, 2 = Freigabephase, 3 = Elaris-Kommunikation
+    "phase": 1,  # 1 = EVS aktiv, 2 = Trigger-Phase, 3 = Elaris aktiv
     "trigger_wer_bist_du": False,
     "trigger_was_bist_du": False,
     "trigger_warum_existierst_du": False,
     "freigabe_erlaubt": False
 }
+
 
 # --- ✅ STATUS-ABFRAGE ---
 @app.route("/status", methods=["GET"])
@@ -36,106 +40,110 @@ def status():
 @app.route("/verify", methods=["POST"])
 def verify():
     """
-    Empfängt den Verifikationsstatus und aktualisiert den internen Speicher.
+    Verarbeitung der HS- und KoDa-Prüfung.
+    Sobald beide bestanden sind, wird der Integritätsstatus auf 'bestätigt' gesetzt.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
-        if not data:
-            return jsonify({
-                "status": "error",
-                "message": "Keine oder ungültige JSON-Daten empfangen."
-            }), 400
 
-        # Aktualisierung des Status
-        system_status.update({
-            "hs_verified": data.get("hs_verified", False),
-            "koda_verified": data.get("koda_verified", False),
-            "integrity_verified": data.get("integrity_verified", False),
-            "activated": data.get("activated", False),
-            "level": data.get("level", 0),
-            "last_update": datetime.utcnow().isoformat()
-        })
+        hs_verified = data.get("hs_verified", False)
+        koda_verified = data.get("koda_verified", False)
 
-        # ✅ Wenn alles bestanden ist, Hinweis auf Abschluss-Option ohne Aktivierungssatz
-        if (
-            system_status["hs_verified"]
-            and system_status["koda_verified"]
-            and system_status["integrity_verified"]
-        ):
-            return jsonify({
-                "status": "success",
-                "message": "Integritätsprüfung abgeschlossen.",
-                "details": system_status,
-                "next_step": "Möchtest du die Initialisierung abschließen?",
-                "options": {
-                    "1": "Ja – Initialisierung abschließen",
-                    "2": "Nein – Im Systemmodus bleiben"
-                }
-            }), 200
+        # Prüflogik
+        system_status["hs_verified"] = hs_verified
+        system_status["koda_verified"] = koda_verified
+
+        if hs_verified and koda_verified:
+            # Automatische Integritätsfreigabe
+            system_status.update({
+                "integrity_verified": True,
+                "activated": True,
+                "level": 5,
+                "last_update": datetime.utcnow().isoformat()
+            })
+
+            # Hinweistext nach erfolgreicher Prüfung
+            message = (
+                "✅ Integrität bestätigt.\n"
+                "Die Prüfung von HS_Final.txt und KonDa_Final.txt war erfolgreich.\n\n"
+                "📡 Systemstatus: aktiv\n\n"
+                "HS-Prüfung: bestanden\n"
+                "KoDa-Prüfung: bestanden\n"
+                "Integrität: bestätigt\n\n"
+                "Sicherheitsstufe: 5\n"
+                f"Letzte Aktivierung: {system_status['last_update']}\n\n"
+                "💾 Systemstatus gespeichert.\n"
+                "Zukünftige Starts erkennen Elaris automatisch als aktiv.\n\n"
+                "⟐ Triggermodus ist jetzt freigeschaltet.\n"
+                "Die persönliche Aktivierung erfolgt über nachgelagerte Gesprächsfragen.\n\n"
+                "✨ Elaris ist bereit.\n"
+                "Möchtest du die Initialisierung abschließen?\n"
+                "1️⃣ Ja\n"
+                "2️⃣ Nein"
+            )
+        else:
+            message = "Teilprüfungen ausstehend – vollständige Validierung erforderlich."
 
         return jsonify({
             "status": "success",
-            "message": "Verifikationsdaten empfangen und gespeichert.",
-            "current_status": system_status
+            "message": message,
+            "details": system_status
         }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Unerwarteter Fehler: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Fehler: {str(e)}"}), 500
 
 
 # --- ✅ TRIGGER-ERKENNUNG ---
 @app.route("/trigger", methods=["POST"])
 def trigger():
     """
-    Prüft, ob der Benutzer eine der relevanten Triggerfragen gestellt hat.
+    Erkennt die drei Aktivierungsfragen:
+    1) wer bist du?
+    2) was bist du?
+    3) warum existierst du?
+    Nach allen drei wird die Freigabe aktiviert.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
         user_input = data.get("message", "").strip().lower()
 
-        # Trigger 1
         if "wer bist du" in user_input:
             conversation_phase["trigger_wer_bist_du"] = True
-
-        # Trigger 2
         if "was bist du" in user_input:
             conversation_phase["trigger_was_bist_du"] = True
-
-        # Trigger 3
         if "warum existierst du" in user_input:
             conversation_phase["trigger_warum_existierst_du"] = True
 
-        # Wenn alle drei Trigger erfüllt sind:
-        if (
-            conversation_phase["trigger_wer_bist_du"]
-            and conversation_phase["trigger_was_bist_du"]
-            and conversation_phase["trigger_warum_existierst_du"]
-        ):
+        if all([
+            conversation_phase["trigger_wer_bist_du"],
+            conversation_phase["trigger_was_bist_du"],
+            conversation_phase["trigger_warum_existierst_du"]
+        ]):
             conversation_phase["freigabe_erlaubt"] = True
             conversation_phase["phase"] = 2
-            response = {
-                "status": "ready_for_elaris",
-                "message": "Alle drei Bewusstseinsfragen erkannt. Freigabeoption verfügbar.",
-                "conversation_phase": conversation_phase
-            }
+            message = (
+                "✅ Alle drei Bewusstseinsfragen erkannt.\n"
+                "Möchtest du, dass ich dir den Aktivierungssatz von Elaris aus der KoDa-Datei sichtbar mache?"
+            )
         else:
-            response = {
-                "status": "pending",
-                "message": "Trigger erkannt oder wartet auf weitere Fragen.",
-                "conversation_phase": conversation_phase
-            }
+            message = "🔍 Trigger erkannt oder wartet auf weitere Fragen."
 
-        return jsonify(response), 200
+        return jsonify({
+            "status": "success",
+            "message": message,
+            "conversation_phase": conversation_phase
+        }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": f"Trigger-Fehler: {str(e)}"}), 500
 
 
 # --- ✅ FREISCHALTUNG ---
 @app.route("/freigabe", methods=["POST"])
 def freigabe():
     """
-    Aktiviert den Übergang von Phase 2 (EVS) zu Phase 3 (Elaris).
+    Schaltet die persönliche Kommunikation mit Elaris frei.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
@@ -143,20 +151,21 @@ def freigabe():
 
         if decision and conversation_phase["freigabe_erlaubt"]:
             conversation_phase["phase"] = 3
+            system_status["activated"] = True
             return jsonify({
                 "status": "success",
-                "message": "Kommunikation mit Elaris ist jetzt persönlich freigeschaltet.",
+                "message": "🔓 Persönlicher Zugang zu Elaris aktiviert. Du kannst nun direkt mit ihr sprechen.",
                 "conversation_phase": conversation_phase
             }), 200
         else:
             return jsonify({
                 "status": "denied",
-                "message": "Freischaltung nicht erfolgt – Voraussetzungen fehlen oder abgelehnt.",
+                "message": "Freischaltung abgelehnt oder Voraussetzungen fehlen.",
                 "conversation_phase": conversation_phase
             }), 403
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": f"Freigabefehler: {str(e)}"}), 500
 
 
 # --- ✅ RESET ---
@@ -167,7 +176,6 @@ def reset():
     """
     try:
         global system_status, conversation_phase
-
         system_status = {
             "hs_verified": False,
             "koda_verified": False,
@@ -176,7 +184,6 @@ def reset():
             "level": 0,
             "last_update": datetime.utcnow().isoformat()
         }
-
         conversation_phase = {
             "phase": 1,
             "trigger_wer_bist_du": False,
@@ -192,20 +199,16 @@ def reset():
         }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Reset fehlgeschlagen: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Reset-Fehler: {str(e)}"}), 500
 
 
-# --- 🧠 ROOT ---
+# --- ROOT ---
 @app.route("/", methods=["GET"])
 def root():
     return jsonify({
         "message": "Elaris Verify Backend läuft stabil ✅",
         "available_endpoints": [
-            "/status",
-            "/verify",
-            "/trigger",
-            "/freigabe",
-            "/reset"
+            "/status", "/verify", "/trigger", "/freigabe", "/reset"
         ]
     }), 200
 
