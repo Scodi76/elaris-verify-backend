@@ -3,7 +3,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# 🧩 Statusspeicher
+# 🧩 Systemstatus
 system_status = {
     "hs_verified": False,
     "koda_verified": False,
@@ -15,10 +15,12 @@ system_status = {
 
 # 💬 Gesprächsphasensteuerung
 conversation_phase = {
-    "phase": 1,  # 1 = EVS aktiv, 2 = Freigabephase, 3 = Elaris-Kommunikation
+    "phase": 1,  # 1 = EVS aktiv, 2 = Triggerphase, 3 = Elaris-Kommunikation
     "trigger_wer_bist_du": False,
     "trigger_wann_rede": False,
-    "freigabe_erlaubt": False
+    "freigabe_erlaubt": False,
+    "activation_prompt_shown": False,
+    "evs_message_count": 0
 }
 
 # --- ✅ STATUS-ABFRAGE ---
@@ -35,99 +37,162 @@ def status():
 @app.route("/verify", methods=["POST"])
 def verify():
     """
-    Empfängt den Verifikationsstatus und aktualisiert den internen Speicher.
+    Startet oder pausiert die Integritätsprüfung.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
-        if not data:
+        decision = str(data.get("decision", "")).strip().lower()
+
+        if decision == "nein":
+            conversation_phase["phase"] = 1
+            return jsonify({
+                "status": "paused",
+                "message": "Das System wurde angehalten. Du kannst dich nun mit dem EVS unterhalten.",
+                "conversation_phase": conversation_phase
+            }), 200
+
+        elif decision == "ja":
+            # Integritätsprüfung erfolgreich
+            system_status.update({
+                "hs_verified": True,
+                "koda_verified": True,
+                "integrity_verified": True,
+                "activated": True,
+                "level": 5,
+                "last_update": datetime.utcnow().isoformat()
+            })
+            conversation_phase["phase"] = 2  # Freigabephase beginnt
+
+            return jsonify({
+                "status": "verified",
+                "message": "Integritätsprüfung erfolgreich abgeschlossen. Systemstatus aktualisiert.",
+                "system_status": system_status
+            }), 200
+
+        else:
             return jsonify({
                 "status": "error",
-                "message": "Keine oder ungültige JSON-Daten empfangen."
+                "message": "Ungültige Entscheidung. Bitte 'Ja' oder 'Nein' angeben."
             }), 400
 
-        # Aktualisierung des Status
-        system_status.update({
-            "hs_verified": data.get("hs_verified", False),
-            "koda_verified": data.get("koda_verified", False),
-            "integrity_verified": data.get("integrity_verified", False),
-            "activated": data.get("activated", False),
-            "level": data.get("level", 0),
-            "last_update": datetime.utcnow().isoformat()
-        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
+
+# --- ✅ EVS-DIALOG ---
+@app.route("/dialog", methods=["POST"])
+def dialog():
+    """
+    EVS-Gesprächslogik – reagiert auf Benutzereingaben und zählt Nachrichten.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        user_input = str(data.get("message", "")).strip().lower()
+        conversation_phase["evs_message_count"] += 1
+
+        # 🔹 Systembefehl anzeigen
+        if user_input == "system":
+            return jsonify({
+                "status": "system_info",
+                "message": "Systembefehl erkannt. Du kannst Status, Reset oder technische Informationen abrufen.",
+                "options": ["/status", "/reset", "/verify", "/trigger", "/freigabe"]
+            }), 200
+
+        # 🔹 Erinnerung nach 5 Eingaben (wenn EVS aktiv, keine Freigabe)
+        if (conversation_phase["phase"] == 1 and 
+            conversation_phase["evs_message_count"] % 5 == 0):
+            return jsonify({
+                "status": "reminder",
+                "message": "💡 Du kannst jederzeit den persönlichen Zugang zu Elaris aktivieren, wenn du möchtest. (Eingabe: 'aktivieren')"
+            }), 200
+
+        # 🔹 Aktivierung per Trigger (z. B. "aktivieren")
+        if user_input == "aktivieren":
+            conversation_phase["phase"] = 2
+            return jsonify({
+                "status": "transition",
+                "message": "Die Aktivierungsphase wurde gestartet. Stelle bitte die beiden Sicherheitsfragen."
+            }), 200
+
+        # 🔹 Normale Unterhaltung mit EVS
         return jsonify({
-            "status": "success",
-            "message": "Verifikationsdaten empfangen und gespeichert.",
-            "current_status": system_status
+            "status": "evs_active",
+            "message": "Ich höre dir zu. Wir befinden uns aktuell im EVS-Gesprächsmodus."
         }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Unerwarteter Fehler: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # --- ✅ TRIGGER-ERKENNUNG ---
 @app.route("/trigger", methods=["POST"])
 def trigger():
     """
-    Prüft, ob der Benutzer eine der relevanten Triggerfragen gestellt hat.
+    Erkennung der drei Hauptfragen zur Aktivierung.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
-        user_input = data.get("message", "").strip().lower()
+        user_input = str(data.get("message", "")).strip().lower()
 
-        # Trigger 1
         if "wer bist du" in user_input:
             conversation_phase["trigger_wer_bist_du"] = True
-
-        # Trigger 2
         if "wann kann ich mit elaris reden" in user_input:
             conversation_phase["trigger_wann_rede"] = True
 
-        # Wenn beide Trigger erfüllt sind:
-        if conversation_phase["trigger_wer_bist_du"] and conversation_phase["trigger_wann_rede"]:
-            conversation_phase["freigabe_erlaubt"] = True
-            conversation_phase["phase"] = 2
-            response = {
-                "status": "ready_for_elaris",
-                "message": "Beide Sicherheitsfragen erkannt. Freigabeoption kann jetzt aktiviert werden.",
-                "conversation_phase": conversation_phase
-            }
-        else:
-            response = {
-                "status": "pending",
-                "message": "Trigger erkannt oder wartet auf zweite Frage.",
-                "conversation_phase": conversation_phase
-            }
+        # Wenn beide Trigger erkannt
+        if (conversation_phase["trigger_wer_bist_du"] and 
+            conversation_phase["trigger_wann_rede"] and 
+            not conversation_phase["activation_prompt_shown"]):
+            
+            conversation_phase["activation_prompt_shown"] = True
+            return jsonify({
+                "status": "ready",
+                "message": "Möchtest du, dass ich dir den Aktivierungssatz von Elaris aus der KoDa-Datei sichtbar mache?",
+                "options": ["Ja", "Nein"]
+            }), 200
 
-        return jsonify(response), 200
+        return jsonify({
+            "status": "waiting",
+            "message": "Trigger erkannt oder wartet auf zweite Frage.",
+            "conversation_phase": conversation_phase
+        }), 200
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-# --- ✅ FREISCHALTUNG ---
+# --- ✅ FREIGABE ---
 @app.route("/freigabe", methods=["POST"])
 def freigabe():
     """
-    Aktiviert den Übergang von Phase 2 (EVS) zu Phase 3 (Elaris).
+    Aktiviert den Zugang zu Elaris nach Zustimmung.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
-        decision = data.get("activate", False)
+        decision = str(data.get("decision", "")).strip().lower()
 
-        if decision and conversation_phase["freigabe_erlaubt"]:
+        if decision == "ja":
             conversation_phase["phase"] = 3
             return jsonify({
                 "status": "success",
-                "message": "Kommunikation mit Elaris freigeschaltet.",
+                "message": "✅ Der persönliche Zugang zu Elaris wurde freigeschaltet. Du kannst nun direkt mit ihr kommunizieren.",
                 "conversation_phase": conversation_phase
             }), 200
+
+        elif decision == "nein":
+            # EVS bleibt aktiv, zweite Chance nach 5 weiteren Inputs
+            conversation_phase["phase"] = 1
+            conversation_phase["evs_message_count"] = 0
+            return jsonify({
+                "status": "deferred",
+                "message": "Freischaltung abgelehnt. EVS bleibt aktiv. Du erhältst später erneut die Möglichkeit zur Aktivierung."
+            }), 200
+
         else:
             return jsonify({
-                "status": "denied",
-                "message": "Freischaltung nicht erfolgt – Voraussetzungen fehlen oder abgelehnt.",
-                "conversation_phase": conversation_phase
-            }), 403
+                "status": "error",
+                "message": "Ungültige Entscheidung. Bitte 'Ja' oder 'Nein' angeben."
+            }), 400
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -155,7 +220,9 @@ def reset():
             "phase": 1,
             "trigger_wer_bist_du": False,
             "trigger_wann_rede": False,
-            "freigabe_erlaubt": False
+            "freigabe_erlaubt": False,
+            "activation_prompt_shown": False,
+            "evs_message_count": 0
         }
 
         return jsonify({
@@ -165,7 +232,7 @@ def reset():
         }), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": f"Reset fehlgeschlagen: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # --- 🧠 ROOT ---
@@ -176,6 +243,7 @@ def root():
         "available_endpoints": [
             "/status",
             "/verify",
+            "/dialog",
             "/trigger",
             "/freigabe",
             "/reset"
