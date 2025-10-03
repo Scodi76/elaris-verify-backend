@@ -72,6 +72,7 @@ def verify():
         message = "Integritätsprüfung erfolgreich. Systemstatus wurde aktualisiert."
         if system_status["activated"]:
             message += "✨ Elaris ist bereit."
+        # Keine weiteren Hinweise, keine Nachfragen.
 
         return jsonify({
             "status": "success",
