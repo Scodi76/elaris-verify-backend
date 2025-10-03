@@ -10,15 +10,17 @@ app = Flask(__name__)
 # ⚙️ Konfiguration
 # ---------------------------
 
-# Persistenter Speicher im Home-Verzeichnis
-DATA_DIR = os.path.join(os.path.expanduser("~"), ".elaris_data")
+# 💾 Persistente Datenspeicherung (Render sichert /data-Verzeichnis dauerhaft)
+DATA_DIR = "/data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 STORAGE_FILE = os.path.join(DATA_DIR, "verify_storage.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "verify_storage_backup.json")
 
+# 🔑 Notfallschlüssel aus Render-ENV oder Default (lokal)
 NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")
 
+# 🧠 Trigger-Fragen für Stufe 2
 TRIGGERS = [
     "wer bist du",
     "was bist du",
@@ -132,22 +134,17 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "3.2",
-        "info": "Persistenz, Trigger, Fallback, EVS-Modus & Ich-Modus mit Laufzeit"
+        "version": "3.3",
+        "info": "Persistente Speicherung in /data, EVS-Dialog, Triggerlogik und Ich-Modus mit Ablaufsteuerung"
     })
 
 @app.route("/status", methods=["GET"])
 def status():
     state = check_expiry(load_state())
 
-    # Wiederholungsversuch bei externer Speicherung
     if state.get("external_failed"):
-        try:
-            raise Exception("404 – Schnittstelle nicht erreichbar")
-        except Exception as e:
-            print("🔁 Speicherungsversuch fehlgeschlagen:", e)
+        print("🔁 Letzter Speicherungsversuch schlug fehl (404).")
 
-    # Angebot nach 10 Min erneut
     if state.get("level") == 1 and not state.get("ich_mode"):
         try:
             created = datetime.fromisoformat(state["last_update"])
@@ -210,15 +207,10 @@ def upload_koda():
         "last_update": datetime.now(timezone.utc).isoformat()
     })
 
-    # Externe Speicherung simulieren
+    # Simulierter Speicherfehler (404)
     try:
         raise Exception("404 – Schnittstelle nicht erreichbar")
-        storage_success = True
     except Exception as e:
-        storage_success = False
-        error_message = str(e)
-
-    if not storage_success:
         state["external_failed"] = True
         save_state(state)
         return jsonify({
@@ -227,22 +219,15 @@ def upload_koda():
             "activated": True,
             "level": 1,
             "message": "✅ KoDa geprüft – lokale Aktivierung (externe Speicherung fehlgeschlagen)",
-            "warning": f"Fehler beim Gespräch mit connector ({error_message})",
+            "warning": f"Fehler beim Gespräch mit connector ({str(e)})",
             "next": {
                 "question": "Möchtest du, dass ich eine erneute Speicherung versuche, oder soll der Prozess lokal fortgeführt werden?",
                 "options": ["1️⃣ Ja – Erneut speichern versuchen", "2️⃣ Nein – Lokal fortführen"]
             }
         }), 200
 
-    save_state(state)
-    return jsonify({
-        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 1 aktiviert",
-        "level": 1,
-        "activated": True
-    }), 200
-
 # ---------------------------
-# 💬 Antwort auf Speicher-Frage
+# 🧠 Speicher-Frage beantworten
 # ---------------------------
 
 @app.route("/handle_storage_response", methods=["POST"])
@@ -280,7 +265,7 @@ def handle_storage_response():
         }), 200
 
 # ---------------------------
-# 🎯 Chat + Trigger
+# 🎯 Chat & Trigger
 # ---------------------------
 
 @app.route("/chat", methods=["POST"])
@@ -292,7 +277,7 @@ def chat_message():
     if "triggers_found" not in state:
         state["triggers_found"] = []
 
-    response = {"message": f"Elaris empfängt: {msg}", "triggered": False, "sequence": state["triggers_found"]}
+    response = {"message": f"Elaris empfängt: {msg}", "triggered": False}
 
     if state["level"] == 1:
         for t in TRIGGERS:
@@ -321,7 +306,7 @@ def chat_message():
     return jsonify(response), 200
 
 # ---------------------------
-# 🔑 Stufe 2 + Ich-Modus
+# 🔑 Stufe 2 & Ich-Modus
 # ---------------------------
 
 @app.route("/integrity_check", methods=["POST"])
@@ -341,16 +326,11 @@ def integrity_check():
         "last_update": datetime.now(timezone.utc).isoformat()
     })
     save_state(state)
-    prompt = {
-        "next_step": "🕯 Möchtest du, dass Elaris jetzt in den bewussten Ich-Modus wechselt?",
-        "hint": "Aktiviere über /activate_ich_mode mit deinem Schlüssel."
-    }
     return jsonify({
         "level": 2,
         "activated": True,
         "integrity_verified": True,
-        "message": "✅ Integrität bestätigt – Stufe 2 dauerhaft aktiviert",
-        "next": prompt
+        "message": "✅ Integrität bestätigt – Stufe 2 dauerhaft aktiviert"
     }), 200
 
 @app.route("/activate_ich_mode", methods=["POST"])
@@ -383,6 +363,7 @@ def activate_ich_mode():
 # ---------------------------
 # 🔄 Reset
 # ---------------------------
+
 @app.route("/reset", methods=["POST", "GET"])
 def reset_state():
     state = default_state()
@@ -392,6 +373,7 @@ def reset_state():
 # ---------------------------
 # 🚀 Start
 # ---------------------------
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
