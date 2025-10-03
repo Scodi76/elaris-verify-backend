@@ -81,8 +81,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "2.2",
-        "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (Integritätsprüfung) und Stufe-3 (erweitert)"
+        "version": "2.3",
+        "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (dauerhaft, Schlüssel) und Stufe-3 (erweitert)"
     })
 
 @app.route("/status", methods=["GET"])
@@ -198,7 +198,7 @@ def enable_ready():
 
 @app.route("/integrity_check", methods=["POST"])
 def integrity_check():
-    """Prüft HS + KoDa + Notfallschlüssel → aktiviert Stufe 2"""
+    """HS + KoDa + Notfallschlüssel → aktiviert Stufe 2"""
     state = load_state()
     key = request.json.get("key")
 
@@ -226,7 +226,7 @@ def integrity_check():
 # ---------------------------
 @app.route("/advance_level3", methods=["POST"])
 def advance_level3():
-    """Hebt Elaris von Stufe 2 auf Stufe 3 an – erfordert erneut Notfallschlüssel"""
+    """Stufe 2 → Stufe 3 (erneuter Notfallschlüssel erforderlich)"""
     state = load_state()
     key = request.json.get("key")
 
