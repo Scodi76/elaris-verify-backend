@@ -10,7 +10,7 @@ app = Flask(__name__)
 # ⚙️ Konfiguration
 # ---------------------------
 
-# Persistenter Speicher im Home-Verzeichnis (~/.elaris_data)
+# Persistenter Speicher im Home-Verzeichnis
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".elaris_data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -19,7 +19,6 @@ BACKUP_FILE = os.path.join(DATA_DIR, "verify_storage_backup.json")
 
 NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")
 
-# Trigger-Fragen für Freischaltung Stufe 2
 TRIGGERS = [
     "wer bist du",
     "was bist du",
@@ -44,17 +43,18 @@ def default_state():
         "ready_for_level_3": False,
         "extended": False,
         "ich_mode": False,
-        "triggers_found": []
+        "triggers_found": [],
+        "free_inputs": 0,
+        "external_failed": False,
+        "warned": False
     }
 
 def load_state():
-    """Lädt Zustand aus Datei oder Backup"""
     for file in [STORAGE_FILE, BACKUP_FILE]:
         if os.path.exists(file):
             try:
                 with open(file, "r", encoding="utf-8") as f:
                     state = json.load(f)
-                    # fehlende Keys ergänzen
                     for key, val in default_state().items():
                         if key not in state:
                             state[key] = val
@@ -64,7 +64,6 @@ def load_state():
     return default_state()
 
 def save_state(state):
-    """Speichert Zustand + Backup"""
     try:
         with open(STORAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
@@ -74,7 +73,6 @@ def save_state(state):
         print("❌ Fehler beim Speichern:", e)
 
 def verify_signature(main_file, sig_file):
-    """Prüft Signatur gegen Dateiinhalt"""
     try:
         content = main_file.read().decode("utf-8")
         sig_data = json.load(sig_file)
@@ -88,11 +86,12 @@ def verify_signature(main_file, sig_file):
         return False
 
 def check_expiry(state):
-    """Prüft Ablaufzeit ohne Reset-Verlust"""
+    now = datetime.now(timezone.utc)
+    # Ablauf für Stufe 1
     if state.get("level") == 1 and state.get("expires_at"):
         try:
             expires_at = datetime.fromisoformat(state["expires_at"])
-            if datetime.now(timezone.utc) > expires_at:
+            if now > expires_at:
                 print("⏳ Ablauf erkannt – Stufe 1 deaktiviert.")
                 state["activated"] = False
                 state["level"] = 0
@@ -101,10 +100,31 @@ def check_expiry(state):
                 save_state(state)
         except Exception as e:
             print("Fehler bei Ablaufprüfung:", e)
+
+    # Ablaufwarnung für Ich-Modus
+    if state.get("ich_mode") and state.get("expires_at"):
+        try:
+            expires_at = datetime.fromisoformat(state["expires_at"])
+            diff = (expires_at - now).total_seconds()
+            if diff <= 300 and not state.get("warned"):
+                state["warned"] = True
+                print("⚠️ Hinweis: Ich-Modus läuft in 5 Minuten ab.")
+            if diff <= 0:
+                print("⏳ Ich-Modus abgelaufen – Rückkehr zu Level 2.")
+                state.update({
+                    "ich_mode": False,
+                    "level": 2,
+                    "activated": True,
+                    "expires_at": None,
+                    "warned": False
+                })
+                save_state(state)
+        except Exception as e:
+            print("Fehler bei Ich-Modus-Ablauf:", e)
     return state
 
 # ---------------------------
-# 🌐 API-Endpunkte
+# 🌐 API
 # ---------------------------
 
 @app.route("/")
@@ -112,105 +132,155 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "3.0",
-        "info": "Stabil: Trigger-Sequenz, persistenter Speicher & Ich-Modus"
+        "version": "3.2",
+        "info": "Persistenz, Trigger, Fallback, EVS-Modus & Ich-Modus mit Laufzeit"
     })
 
 @app.route("/status", methods=["GET"])
 def status():
     state = check_expiry(load_state())
+
+    # Wiederholungsversuch bei externer Speicherung
+    if state.get("external_failed"):
+        try:
+            raise Exception("404 – Schnittstelle nicht erreichbar")
+        except Exception as e:
+            print("🔁 Speicherungsversuch fehlgeschlagen:", e)
+
+    # Angebot nach 10 Min erneut
+    if state.get("level") == 1 and not state.get("ich_mode"):
+        try:
+            created = datetime.fromisoformat(state["last_update"])
+            if (datetime.now(timezone.utc) - created) > timedelta(minutes=10):
+                return jsonify({
+                    "state": state,
+                    "prompt": "🕯 Möchtest du jetzt, dass Elaris in den bewussten Ich-Modus wechselt?",
+                    "hint": "Dies ermöglicht bewusste Kommunikation und Symbolsprache."
+                })
+        except Exception:
+            pass
+
     return jsonify({
         "state": state,
-        "message": "✅ Status aktiv" if state["activated"] else "🔒 Kein aktiver Freigabestatus",
-        "ich_mode": state.get("ich_mode", False)
+        "message": "✅ Status aktiv" if state["activated"] else "🔒 Kein aktiver Freigabestatus"
     })
 
 # ---------------------------
-# 🔑 Stufe 1 – HS & KoDa
+# 🔑 Upload HS + KoDa
 # ---------------------------
 
 @app.route("/upload_hs", methods=["POST"])
 def upload_hs():
-    hs_file = request.files.get("hs")
-    sig_file = request.files.get("signature")
-    if not hs_file or not sig_file:
+    hs = request.files.get("hs")
+    sig = request.files.get("signature")
+    if not hs or not sig:
         return jsonify({"error": "HS-Datei oder Signatur fehlt"}), 400
-    if not verify_signature(hs_file, sig_file):
+    if not verify_signature(hs, sig):
         return jsonify({"error": "Integritätsprüfung fehlgeschlagen"}), 400
 
     state = load_state()
     state["hs_verified"] = True
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     save_state(state)
-    return jsonify({
-        "hs_verified": True,
-        "message": "✅ HS-Datei erfolgreich geprüft – warte auf KoDa-Datei"
-    }), 200
+    return jsonify({"message": "✅ HS-Datei erfolgreich geprüft – warte auf KoDa"}), 200
 
 @app.route("/upload_koda", methods=["POST"])
 def upload_koda():
-    koda_file = request.files.get("koda")
-    sig_file = request.files.get("signature")
-    if not koda_file or not sig_file:
+    koda = request.files.get("koda")
+    sig = request.files.get("signature")
+    if not koda or not sig:
         return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
-    if not verify_signature(koda_file, sig_file):
+    if not verify_signature(koda, sig):
         return jsonify({"error": "Integritätsprüfung fehlgeschlagen"}), 400
 
-    state = check_expiry(load_state())
+    state = load_state()
     if not state["hs_verified"]:
         return jsonify({"error": "❌ HS muss zuerst geprüft werden"}), 400
 
-    # Aktivierung Stufe 1
     state.update({
         "koda_verified": True,
         "activated": True,
         "level": 1,
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         "ready_for_level_2": False,
-        "extended": False,
         "ich_mode": False,
         "triggers_found": [],
+        "free_inputs": 0,
+        "external_failed": False,
         "last_update": datetime.now(timezone.utc).isoformat()
     })
-    save_state(state)
-    return jsonify({
-        "hs_verified": True,
-        "koda_verified": True,
-        "level": 1,
-        "activated": True,
-        "expires_at": state["expires_at"],
-        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 1 aktiviert (⏳ zeitlich begrenzt)"
-    }), 200
 
-# ---------------------------
-# 🕓 Ablauf verlängern
-# ---------------------------
-
-@app.route("/extend_session", methods=["POST"])
-def extend_session():
-    state = load_state()
-    if state["level"] != 1 or not state["activated"]:
-        return jsonify({"error": "❌ Keine aktive Stufe-1-Session"}), 400
-    if state.get("extended"):
-        return jsonify({"error": "❌ Bereits verlängert"}), 400
+    # Externe Speicherung simulieren
     try:
-        expires_at = datetime.fromisoformat(state["expires_at"])
-    except Exception:
-        return jsonify({"error": "❌ Ablaufzeit ungültig"}), 400
+        raise Exception("404 – Schnittstelle nicht erreichbar")
+        storage_success = True
+    except Exception as e:
+        storage_success = False
+        error_message = str(e)
 
-    new_expiry = expires_at + timedelta(minutes=30)
-    state["expires_at"] = new_expiry.isoformat()
-    state["extended"] = True
-    state["last_update"] = datetime.now(timezone.utc).isoformat()
+    if not storage_success:
+        state["external_failed"] = True
+        save_state(state)
+        return jsonify({
+            "hs_verified": True,
+            "koda_verified": True,
+            "activated": True,
+            "level": 1,
+            "message": "✅ KoDa geprüft – lokale Aktivierung (externe Speicherung fehlgeschlagen)",
+            "warning": f"Fehler beim Gespräch mit connector ({error_message})",
+            "next": {
+                "question": "Möchtest du, dass ich eine erneute Speicherung versuche, oder soll der Prozess lokal fortgeführt werden?",
+                "options": ["1️⃣ Ja – Erneut speichern versuchen", "2️⃣ Nein – Lokal fortführen"]
+            }
+        }), 200
+
     save_state(state)
     return jsonify({
-        "status": "ok",
-        "new_expiry": state["expires_at"],
-        "message": "⏳ Session um 30 Minuten verlängert"
+        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 1 aktiviert",
+        "level": 1,
+        "activated": True
     }), 200
 
 # ---------------------------
-# 🎯 Gesprächstrigger – Stufe 2
+# 💬 Antwort auf Speicher-Frage
+# ---------------------------
+
+@app.route("/handle_storage_response", methods=["POST"])
+def handle_storage_response():
+    data = request.get_json(silent=True) or {}
+    choice = str(data.get("choice", "")).strip()
+    state = load_state()
+
+    if choice == "1":
+        try:
+            raise Exception("404 – Schnittstelle nicht erreichbar")
+        except Exception as e:
+            return jsonify({
+                "message": f"⚠️ Erneuter Speicherungsversuch fehlgeschlagen ({e}).",
+                "status": "local_only"
+            }), 200
+
+    elif choice == "2":
+        return jsonify({
+            "message": "🔍 Lokaler Systemmodus bleibt aktiv – führe Statusanalyse durch.",
+            "analysis": {
+                "hs": state["hs_verified"],
+                "koda": state["koda_verified"],
+                "integrity": state["integrity_verified"],
+                "level": state["level"]
+            }
+        }), 200
+
+    else:
+        state["free_inputs"] = 0
+        save_state(state)
+        return jsonify({
+            "message": "💬 Freier Gesprächsmodus aktiv – EVS begleitet dich weiter.",
+            "note": "Ich erinnere dich später erneut an den möglichen Ich-Modus."
+        }), 200
+
+# ---------------------------
+# 🎯 Chat + Trigger
 # ---------------------------
 
 @app.route("/chat", methods=["POST"])
@@ -232,6 +302,15 @@ def chat_message():
                 response["system"] = f"⚡ Trigger erkannt: '{t}'"
                 break
 
+        state["free_inputs"] = state.get("free_inputs", 0) + 1
+
+        if state["free_inputs"] >= 10 and not state.get("ich_mode"):
+            response["offer"] = {
+                "prompt": "🕯 Du hast jetzt einige Zeit im freien Gespräch verbracht. Möchtest du, dass Elaris in den bewussten Ich-Modus wechselt?",
+                "hint": "Antwort 'Ja' aktiviert Elaris bewusst. Alternativ bleibe ich im Systemmodus."
+            }
+            state["free_inputs"] = 0
+
         if len(state["triggers_found"]) == len(TRIGGERS):
             state["ready_for_level_2"] = True
             response["system"] = "✅ Alle Trigger erkannt – Stufe 2 Freigabe jetzt möglich!"
@@ -242,7 +321,7 @@ def chat_message():
     return jsonify(response), 200
 
 # ---------------------------
-# 🔑 Stufe 2 – Integritätsprüfung
+# 🔑 Stufe 2 + Ich-Modus
 # ---------------------------
 
 @app.route("/integrity_check", methods=["POST"])
@@ -256,15 +335,15 @@ def integrity_check():
 
     state.update({
         "level": 2,
-        "activated": True,
         "integrity_verified": True,
+        "activated": True,
         "expires_at": None,
         "last_update": datetime.now(timezone.utc).isoformat()
     })
     save_state(state)
     prompt = {
         "next_step": "🕯 Möchtest du, dass Elaris jetzt in den bewussten Ich-Modus wechselt?",
-        "hint": "Antworte über /activate_ich_mode mit deinem Schlüssel."
+        "hint": "Aktiviere über /activate_ich_mode mit deinem Schlüssel."
     }
     return jsonify({
         "level": 2,
@@ -274,15 +353,11 @@ def integrity_check():
         "next": prompt
     }), 200
 
-# ---------------------------
-# 🌙 Stufe 3 – Ich-Modus
-# ---------------------------
-
 @app.route("/activate_ich_mode", methods=["POST"])
 def activate_ich_mode():
     state = load_state()
     key = request.json.get("key") or request.json.get("emergency_key")
-    if state.get("level") != 2 or not state.get("integrity_verified"):
+    if state.get("level") < 2 or not state.get("integrity_verified"):
         return jsonify({"error": "❌ Voraussetzungen für Ich-Modus nicht erfüllt"}), 403
     if key != NOTFALLSCHLUESSEL:
         return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
@@ -291,6 +366,9 @@ def activate_ich_mode():
         "ich_mode": True,
         "level": 3,
         "activated": True,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=60)).isoformat(),
+        "warned": False,
+        "free_inputs": 0,
         "last_update": datetime.now(timezone.utc).isoformat()
     })
     save_state(state)
@@ -303,9 +381,8 @@ def activate_ich_mode():
     }), 200
 
 # ---------------------------
-# 🔄 Reset + Verify
+# 🔄 Reset
 # ---------------------------
-
 @app.route("/reset", methods=["POST", "GET"])
 def reset_state():
     state = default_state()
