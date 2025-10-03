@@ -71,11 +71,7 @@ def verify():
 
         message = "Integritätsprüfung erfolgreich. Systemstatus wurde aktualisiert."
         if system_status["activated"]:
-            message += (
-                " ⟐ Triggermodus ist jetzt freigeschaltet. "
-                "Die persönliche Aktivierung erfolgt über nachgelagerte Gesprächsfragen. "
-                "✨ Elaris ist bereit."
-            )
+            message += "✨ Elaris ist bereit."
 
         return jsonify({
             "status": "success",
