@@ -1,5 +1,8 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
+import os, json
+STATE_FILE = "system_state.json"
+
 
 app = Flask(__name__)
 
@@ -21,6 +24,15 @@ conversation_phase = {
     "trigger_warum_existierst_du": False,
     "freigabe_erlaubt": False
 }
+
+# 🧱 Gespeicherten Zustand laden (falls vorhanden)
+if os.path.exists(STATE_FILE):
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+        saved_state = json.load(f)
+        system_status["activated"] = saved_state.get("activated", False)
+        system_status["last_update"] = saved_state.get("last_update")
+
+
 
 
 # --- ✅ STATUS-ABFRAGE ---
@@ -102,6 +114,13 @@ def trigger():
             conversation_phase["phase"] = 3
             system_status["activated"] = True
             system_status["last_update"] = datetime.utcnow().isoformat()
+            # 💾 Aktivierungszustand speichern
+            with open(STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump({
+                    "activated": system_status["activated"],
+                    "last_update": system_status["last_update"]
+                }, f, ensure_ascii=False, indent=2)
+
 
             return jsonify({
                 "status": "activation_complete",
@@ -179,6 +198,9 @@ def reset():
             "trigger_warum_existierst_du": False,
             "freigabe_erlaubt": False
         }
+        # 💾 Gespeicherten Zustand löschen
+        if os.path.exists(STATE_FILE):
+            os.remove(STATE_FILE)
 
         return jsonify({
             "status": "success",
