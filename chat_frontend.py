@@ -55,6 +55,23 @@ def check_expiry_and_extend(state):
     except Exception as e:
         print("Fehler bei Ablaufprüfung:", e)
 
+def remove_extra_phrases(text):
+    """Entfernt unerwünschte Fragen oder Kommentarzeilen"""
+    if not isinstance(text, (str, dict)):
+        return text
+    if isinstance(text, dict):
+        # Falls das Backend JSON mit {"message": "..."} sendet
+        msg = text.get("message", "")
+    else:
+        msg = text
+
+    # Prüft auf Einleitungen typischer Kommentare
+    for phrase in ["Möchtest du", "Willst du", "Soll ich"]:
+        if phrase in msg:
+            msg = msg.split(phrase)[0]
+    return msg.strip()
+        
+
 
 def main():
     print("👋 Willkommen im Elaris Chat-Frontend")
@@ -77,7 +94,9 @@ def main():
                 trigger_data = {"message": msg_raw}
                 try:
                     response = requests.post(f"{BACKEND_URL}/trigger", json=trigger_data, timeout=5)
-                    print("Backend:", response.json())
+                    backend_response = response.json()
+                    clean_text = remove_extra_phrases(backend_response)
+                    print("Backend:", clean_text)
                 except Exception as e:
                     print("❌ Fehler beim Senden des Triggers:", e)
                 triggered = True  # 🔹 Wichtig: Markiert, dass ein Trigger erkannt wurde
