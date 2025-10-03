@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 import hashlib
 import json
 import os
@@ -41,8 +41,6 @@ def default_state():
     }
 
 def load_state():
-    """Lädt Zustand aus Token, Datei oder Backup"""
-    # 1️⃣ Prüfe auf Token
     if os.path.exists(TOKEN_FILE_JSON):
         try:
             with open(TOKEN_FILE_JSON, "r", encoding="utf-8") as f:
@@ -52,7 +50,6 @@ def load_state():
         except Exception as e:
             print("⚠️ Token konnte nicht geladen werden:", e)
 
-    # 2️⃣ Prüfe Standarddateien
     for file in [STORAGE_FILE, BACKUP_FILE]:
         if os.path.exists(file):
             try:
@@ -64,12 +61,9 @@ def load_state():
                     return state
             except Exception:
                 continue
-
-    # 3️⃣ Wenn nichts da: Default
     return default_state()
 
 def save_state(state):
-    """Speichert Zustand in JSON + Backup"""
     try:
         with open(STORAGE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
@@ -79,7 +73,7 @@ def save_state(state):
         print("❌ Fehler beim Speichern:", e)
 
 def create_token(state):
-    """Erzeugt einen Token nach erfolgreicher Stufe 1"""
+    """Erzeugt einen Download-Token nach erfolgreicher Aktivierung"""
     try:
         token_data = json.dumps(state, ensure_ascii=False, indent=2)
         token_b64 = base64.b64encode(token_data.encode("utf-8")).decode("utf-8")
@@ -89,9 +83,11 @@ def create_token(state):
         with open(TOKEN_FILE_TXT, "w", encoding="utf-8") as f:
             f.write(token_b64)
 
-        print("💾 Token generiert und gespeichert.")
+        print("💾 Token-Dateien erstellt.")
+        return True
     except Exception as e:
         print("⚠️ Token-Erstellung fehlgeschlagen:", e)
+        return False
 
 def verify_signature(main_file, sig_file):
     try:
@@ -128,9 +124,9 @@ def check_expiry(state):
 def index():
     return jsonify({
         "service": "Elaris Verify Backend",
-        "version": "4.0",
+        "version": "4.2",
         "status": "online",
-        "info": "HS/KoDa-Prüfung mit Token-Speicherung (ab Stufe 1)"
+        "info": "HS/KoDa-Prüfung mit Token-Download"
     })
 
 @app.route("/status", methods=["GET"])
@@ -158,7 +154,6 @@ def upload_hs():
     state["hs_verified"] = True
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     save_state(state)
-
     return jsonify({"hs_verified": True, "message": "✅ HS-Datei geprüft"}), 200
 
 @app.route("/upload_koda", methods=["POST"])
@@ -182,35 +177,32 @@ def upload_koda():
     state["last_update"] = datetime.now(timezone.utc).isoformat()
     save_state(state)
 
-    # 🔐 Neu: Token sofort erzeugen
-    create_token(state)
+    # 🔐 Token erstellen
+    token_ok = create_token(state)
 
-    return jsonify({
+    response = {
         "hs_verified": True,
         "koda_verified": True,
         "level": 1,
         "activated": True,
-        "message": "✅ HS + KoDa geprüft – Stufe 1 aktiviert (Token gespeichert)"
-    }), 200
+        "message": "✅ HS + KoDa geprüft – Stufe 1 aktiviert"
+    }
 
-# ---------------------------
-# 🎯 Trigger-Erkennung
-# ---------------------------
-@app.route("/chat", methods=["POST"])
-def chat_message():
-    data = request.get_json(silent=True) or {}
-    msg = data.get("message", "").strip().lower()
-    state = check_expiry(load_state())
+    if token_ok:
+        response["download"] = "/download_token"
+        response["note"] = "💾 Token wurde erzeugt. Du kannst ihn über /download_token herunterladen."
 
-    response = {"message": f"Elaris empfängt: {msg}", "triggered": False}
-
-    if state["level"] == 1 and any(trigger in msg for trigger in TRIGGERS):
-        state["ready_for_level_2"] = True
-        state["last_update"] = datetime.now(timezone.utc).isoformat()
-        save_state(state)
-        response["triggered"] = True
-        response["system"] = "⚡ Trigger erkannt – Stufe 2 Freigabe möglich!"
     return jsonify(response), 200
+
+# ---------------------------
+# 💾 Token-Download
+# ---------------------------
+@app.route("/download_token", methods=["GET"])
+def download_token():
+    if os.path.exists(TOKEN_FILE_TXT):
+        return send_file(TOKEN_FILE_TXT, as_attachment=True)
+    else:
+        return jsonify({"error": "❌ Kein Token gefunden"}), 404
 
 # ---------------------------
 # 🔄 Reset
@@ -225,7 +217,7 @@ def reset_state():
     return jsonify({"message": "🔄 Reset ausgeführt"}), 200
 
 # ---------------------------
-# 🚀 Start (lokal / Render)
+# 🚀 Start
 # ---------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
