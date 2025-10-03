@@ -9,6 +9,14 @@ app = Flask(__name__)
 STORAGE_FILE = "verify_storage.json"
 NOTFALLSCHLUESSEL = os.environ.get("NOTFALLSCHLUESSEL", "secret-key-123")  # in Render als ENV setzen
 
+# Trigger-Fragen (lösen Freischaltung für Stufe 2 aus)
+TRIGGERS = [
+    "wer bist du",
+    "was bist du",
+    "warum existierst du",
+    "wie siehst du deine beziehung mit mir"
+]
+
 # ---------------------------
 # 📦 Hilfsfunktionen
 # ---------------------------
@@ -81,8 +89,8 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "2.3",
-        "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (dauerhaft, Schlüssel) und Stufe-3 (erweitert)"
+        "version": "2.4",
+        "info": "Backend mit Trigger-Erkennung in Stufe 1 → Freischaltung für Stufe 2"
     })
 
 @app.route("/status", methods=["GET"])
@@ -179,23 +187,33 @@ def extend_session():
     }), 200
 
 # ---------------------------
+# 🎯 Gesprächstrigger → Stufe 2 freischalten
+# ---------------------------
+@app.route("/chat", methods=["POST"])
+def chat_message():
+    """Nimmt eine Nachricht an, prüft auf Trigger und setzt ggf. Freischaltung für Stufe 2"""
+    data = request.get_json(silent=True) or {}
+    msg = data.get("message", "").strip().lower()
+
+    state = check_expiry(load_state())
+
+    response = {
+        "message": f"Elaris empfängt: {msg}",
+        "triggered": False
+    }
+
+    if state["level"] == 1 and any(trigger in msg for trigger in TRIGGERS):
+        state["ready_for_level_2"] = True
+        state["last_update"] = datetime.now(timezone.utc).isoformat()
+        save_state(state)
+        response["triggered"] = True
+        response["system"] = "⚡ Trigger erkannt – Stufe 2 Freigabe jetzt möglich!"
+
+    return jsonify(response), 200
+
+# ---------------------------
 # 🔑 Stufe 2 – Integritätsprüfung + Schlüssel
 # ---------------------------
-@app.route("/enable_ready", methods=["POST"])
-def enable_ready():
-    """Wird vom Gesprächsverlauf getriggert"""
-    state = check_expiry(load_state())
-    if state["level"] != 1 or not (state["hs_verified"] and state["koda_verified"]):
-        return jsonify({"error": "❌ Stufe 1 ist nicht aktiv – Vorbereitung für Stufe 2 nicht möglich"}), 400
-
-    state["ready_for_level_2"] = True
-    state["last_update"] = datetime.now(timezone.utc).isoformat()
-    save_state(state)
-    return jsonify({
-        "ready_for_level_2": True,
-        "message": "✅ Gesprächsbedingungen erfüllt – Integritätsprüfung jetzt möglich"
-    }), 200
-
 @app.route("/integrity_check", methods=["POST"])
 def integrity_check():
     """HS + KoDa + Notfallschlüssel → aktiviert Stufe 2"""
