@@ -81,7 +81,7 @@ def index():
     return jsonify({
         "service": "Elaris Verify Backend",
         "status": "online",
-        "version": "2.1",
+        "version": "2.2",
         "info": "Backend mit Stufe-1 (zeitbegrenzt), Stufe-2 (Integritätsprüfung) und Stufe-3 (erweitert)"
     })
 
@@ -94,7 +94,7 @@ def status():
     })
 
 # ---------------------------
-# 🔑 Stufe 1 – HS
+# 🔑 Stufe 1 – HS & KoDa
 # ---------------------------
 @app.route("/upload_hs", methods=["POST"])
 def upload_hs():
@@ -109,21 +109,46 @@ def upload_hs():
 
     state = load_state()
     state["hs_verified"] = True
-    state["activated"] = True
-    state["level"] = 1
     state["last_update"] = datetime.now(timezone.utc).isoformat()
-    state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    state["ready_for_level_2"] = False
-    state["ready_for_level_3"] = False
-    state["extended"] = False
     save_state(state)
 
     return jsonify({
         "hs_verified": True,
+        "message": "✅ HS-Datei erfolgreich geprüft – warte auf KoDa-Datei"
+    }), 200
+
+@app.route("/upload_koda", methods=["POST"])
+def upload_koda():
+    koda_file = request.files.get("koda")
+    sig_file = request.files.get("signature")
+
+    if not koda_file or not sig_file:
+        return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
+
+    if not verify_signature(koda_file, sig_file):
+        return jsonify({"error": "Integritätsprüfung fehlgeschlagen"}), 400
+
+    state = check_expiry(load_state())
+    if not state["hs_verified"]:
+        return jsonify({"error": "❌ HS muss zuerst geprüft werden"}), 400
+
+    # Beide Dateien geprüft → Stufe 1 aktivieren
+    state["koda_verified"] = True
+    state["activated"] = True
+    state["level"] = 1
+    state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    state["ready_for_level_2"] = False
+    state["extended"] = False
+    state["last_update"] = datetime.now(timezone.utc).isoformat()
+    save_state(state)
+
+    return jsonify({
+        "hs_verified": True,
+        "koda_verified": True,
         "level": 1,
         "activated": True,
         "expires_at": state["expires_at"],
-        "message": "✅ HS-Datei erfolgreich geprüft – Stufe 1 aktiviert (⏳ zeitlich begrenzt)"
+        "message": "✅ KoDa-Datei erfolgreich geprüft – Stufe 1 aktiviert (⏳ zeitlich begrenzt)"
     }), 200
 
 @app.route("/extend_session", methods=["POST"])
@@ -154,13 +179,13 @@ def extend_session():
     }), 200
 
 # ---------------------------
-# 🔑 Stufe 2 – KoDa (Upload) + Integritätsprüfung
+# 🔑 Stufe 2 – Integritätsprüfung + Schlüssel
 # ---------------------------
 @app.route("/enable_ready", methods=["POST"])
 def enable_ready():
     """Wird vom Gesprächsverlauf getriggert"""
     state = check_expiry(load_state())
-    if state["level"] != 1 or not state["hs_verified"]:
+    if state["level"] != 1 or not (state["hs_verified"] and state["koda_verified"]):
         return jsonify({"error": "❌ Stufe 1 ist nicht aktiv – Vorbereitung für Stufe 2 nicht möglich"}), 400
 
     state["ready_for_level_2"] = True
@@ -168,34 +193,7 @@ def enable_ready():
     save_state(state)
     return jsonify({
         "ready_for_level_2": True,
-        "message": "✅ Gesprächsbedingungen erfüllt – KoDa-Upload jetzt erlaubt"
-    }), 200
-
-@app.route("/upload_koda", methods=["POST"])
-def upload_koda():
-    koda_file = request.files.get("koda")
-    sig_file = request.files.get("signature")
-
-    if not koda_file or not sig_file:
-        return jsonify({"error": "KoDa-Datei oder Signatur fehlt"}), 400
-
-    if not verify_signature(koda_file, sig_file):
-        return jsonify({"error": "Integritätsprüfung fehlgeschlagen"}), 400
-
-    state = check_expiry(load_state())
-
-    if state["level"] != 1 or not state.get("ready_for_level_2"):
-        return jsonify({"error": "❌ Voraussetzungen für KoDa-Upload nicht erfüllt"}), 403
-
-    # Nur speichern – keine Freigabe
-    state["koda_verified"] = True
-    state["last_update"] = datetime.now(timezone.utc).isoformat()
-    save_state(state)
-
-    return jsonify({
-        "koda_verified": True,
-        "level": state["level"],
-        "message": "📂 KoDa-Datei hochgeladen – bitte Integritätscheck durchführen"
+        "message": "✅ Gesprächsbedingungen erfüllt – Integritätsprüfung jetzt möglich"
     }), 200
 
 @app.route("/integrity_check", methods=["POST"])
@@ -204,7 +202,7 @@ def integrity_check():
     state = load_state()
     key = request.json.get("key")
 
-    if state["level"] != 1 or not (state["hs_verified"] and state["koda_verified"]):
+    if state["level"] != 1 or not (state["hs_verified"] and state["koda_verified"] and state["ready_for_level_2"]):
         return jsonify({"error": "❌ Voraussetzungen für Integritätsprüfung nicht erfüllt"}), 403
     if key != NOTFALLSCHLUESSEL:
         return jsonify({"error": "❌ Ungültiger Notfallschlüssel"}), 403
@@ -228,7 +226,7 @@ def integrity_check():
 # ---------------------------
 @app.route("/advance_level3", methods=["POST"])
 def advance_level3():
-    """Hebt Elaris von Stufe 2 auf Stufe 3 an – erfordert erneuten Notfallschlüssel"""
+    """Hebt Elaris von Stufe 2 auf Stufe 3 an – erfordert erneut Notfallschlüssel"""
     state = load_state()
     key = request.json.get("key")
 
@@ -268,7 +266,7 @@ def verify_combined():
         if "level" in data:
             state["level"] = int(data["level"])
 
-        if state["level"] == 1 and state["hs_verified"] and not state["koda_verified"]:
+        if state["level"] == 1 and state["hs_verified"] and state["koda_verified"]:
             state["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
         if state["level"] >= 2 and state["koda_verified"]:
             state["expires_at"] = None
