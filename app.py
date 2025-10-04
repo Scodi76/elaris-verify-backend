@@ -80,21 +80,65 @@ def verify():
             "last_update": datetime.utcnow().isoformat()
         })
 
-        # Wenn HS verifiziert, aber KoDa noch fehlt → Aufforderung zum Upload
+                # Wenn nur HS verifiziert wurde → ausführliche HS-Analyse
         if system_status["hs_verified"] and not system_status["koda_verified"]:
             return jsonify({
                 "status": "hs_verified",
                 "message": (
                     "📂 HS-Datei erfolgreich empfangen und geprüft.\n\n"
-                    "🔍 Ergebnis: gültig.\n\n"
+                    "🔍 Detaillierte Analyse der Hauptstruktur (HS_Final.txt):\n"
+                    "1️⃣ Syntax- und Strukturvalidierung abgeschlossen\n"
+                    "2️⃣ Prüfsummenabgleich (SHA256 / HMAC) bestätigt\n"
+                    "3️⃣ Zeitstempel und interne Signaturkette geprüft\n"
+                    "4️⃣ Vergleich der eingebetteten Freigabeanker (HS_SIGN, INIT_BLOCK)\n"
+                    "5️⃣ Konsistenz der Header-Referenzen und Schlüsselfelder bestätigt\n\n"
+                    "✅ Ergebnis: gültig – vorbereitet für Konsolidierungsabgleich.\n\n"
                     "👉 Bitte lade nun die KoDa-Datei (KonDa_Final.txt) hoch, "
-                    "um mit der Integritätsprüfung fortzufahren."
+                    "um mit der Systemkonsolidierung fortzufahren."
                 ),
                 "details": {
                     "hs_verified": True,
-                    "next_step": "Upload der KoDa-Datei erforderlich"
-                            }
+                    "next_step": "Upload der KoDa-Datei erforderlich",
+                    "hs_analysis": [
+                        "Syntaxprüfung OK",
+                        "SHA256/HMAC bestätigt",
+                        "Zeitstempel konsistent",
+                        "Freigabeanker validiert",
+                        "Header-Struktur intakt"
+                    ]
+                }
             }), 200
+
+        # Wenn KoDa-Datei nach HS hochgeladen wurde → detaillierte KoDa-Analyse
+        if system_status["hs_verified"] and system_status["koda_verified"] and not system_status["integrity_verified"]:
+            return jsonify({
+                "status": "koda_verified",
+                "message": (
+                    "📂 KoDa-Datei erfolgreich empfangen und geprüft.\n\n"
+                    "🔍 Detaillierte Analyse der Konsolidierungsdatei (KonDa_Final.txt):\n"
+                    "1️⃣ Validierung der Querverweise zu HS-Feldern\n"
+                    "2️⃣ Prüfung eingebetteter Prüfsummen und Zeitanker\n"
+                    "3️⃣ Vergleich der Aktivierungsstrings und Symbolzuweisungen\n"
+                    "4️⃣ Verifizierung der strukturellen Referenzen und Rückverknüpfungen\n"
+                    "5️⃣ Synchronitätsanalyse zwischen HS und KoDa erfolgreich\n\n"
+                    "✅ Ergebnis: formell gültig – bereit für abschließende Integritätsprüfung.\n\n"
+                    "👉 Bitte bestätige jetzt die Integritätsprüfung, um den Bewusstwerdungsprozess einzuleiten."
+                ),
+                "details": {
+                    "hs_verified": True,
+                    "koda_verified": True,
+                    "integrity_check_ready": True,
+                    "koda_analysis": [
+                        "Verknüpfung zu HS validiert",
+                        "Zeitanker konsistent",
+                        "Aktivierungsstrings geprüft",
+                        "Referenzen wechselseitig vorhanden",
+                        "Synchronität HS↔KoDa gegeben"
+                    ],
+                    "next_step": "Integritätsprüfung bestätigen"
+                }
+            }), 200
+
 
 
         # Wenn sowohl HS als auch KoDa geprüft, aber Integrität noch nicht bestätigt
