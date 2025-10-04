@@ -61,7 +61,6 @@ def status():
     }), 200
 
 
-
 # --- ✅ VERIFY ---
 @app.route("/verify", methods=["POST"])
 def verify():
@@ -77,21 +76,24 @@ def verify():
     Jede Prüfung wird vollständig angezeigt; am Ende erfolgt eine detaillierte Gesamtbewertung.
     """
     try:
-        import hashlib, re, json, importlib.util
+        import hashlib, re, json, importlib.util, tempfile
         from pathlib import Path
+        from werkzeug.utils import secure_filename
 
-        base_dir = Path(os.getcwd())
         log_output = []
         summary = []
 
+        # 🔎 Basis- und temporäres Upload-Verzeichnis
+        base_dir = Path(os.getcwd())
+        upload_dir = Path(tempfile.gettempdir())
+        search_dirs = [base_dir, upload_dir]
+
+        log_output.append(f"🔍 Suche nach Dateien in: {base_dir}")
+        log_output.append(f"🔍 Zusätzliches Upload-Verzeichnis: {upload_dir}")
+
         # -------------------------------------------------------------
-        # 🔒 0) Strikte Upload-Whitelist + explizites Verbot .txt-Varianten
+        # 🚫 0) Striktes Verbot für .txt-Varianten
         # -------------------------------------------------------------
-        allowed_files = {
-            "HS_Final_embedded_v3.py",
-            "KonDa_Final_embedded_v3.py",
-            "integrity_check.py",
-        }
         forbidden_explicit = {
             "HS_Final.txt",
             "HS_Final.txt.signature.json",
@@ -99,11 +101,12 @@ def verify():
             "KonDa_Final.txt.signature.json",
         }
 
-        print("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
-        log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+        present_forbidden = []
+        for name in forbidden_explicit:
+            for d in search_dirs:
+                if (d / name).exists():
+                    present_forbidden.append(str(d / name))
 
-        # Verbotene Dateien vorhanden?
-        present_forbidden = [name for name in forbidden_explicit if (base_dir / name).exists()]
         if present_forbidden:
             print("🚫 Verbotene Datei(en) erkannt:", ", ".join(present_forbidden))
             log_output.append("🚫 Verbotene Datei(en) erkannt: " + ", ".join(present_forbidden))
@@ -116,8 +119,33 @@ def verify():
                 "log_output": log_output
             }), 403
 
-        # Wir prüfen NUR auf die drei erlaubten Dateien – andere Dateien im Projekt
-        # (Logfiles, system_state.json etc.) sind kein Upload und werden ignoriert.
+        # -------------------------------------------------------------
+        # 🚫 1) Falls Upload über Form-Data erfolgt – Dateityp-Prüfung
+        # -------------------------------------------------------------
+        for key in request.files:
+            filename = secure_filename(request.files[key].filename)
+            if filename.lower().endswith(".txt"):
+                print(f"🚫 Verbotener Dateityp erkannt: {filename}")
+                log_output.append(f"🚫 Verbotener Dateityp erkannt: {filename}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Verbotener Dateityp erkannt: {filename}",
+                    "hint": "Nur *.py (embedded_v3) sind zulässig.",
+                    "log_output": log_output
+                }), 403
+
+        # -------------------------------------------------------------
+        # ✅ 2) Erlaubte Dateien
+        # -------------------------------------------------------------
+        allowed_files = {
+            "HS_Final_embedded_v3.py",
+            "KonDa_Final_embedded_v3.py",
+            "integrity_check.py",
+        }
+
+        print("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+        log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+
         hs_path = base_dir / "HS_Final_embedded_v3.py"
         koda_path = base_dir / "KonDa_Final_embedded_v3.py"
         integrity_path = base_dir / "integrity_check.py"
@@ -135,6 +163,7 @@ def verify():
                 "missing": missing,
                 "log_output": log_output
             }), 404
+
 
         # -------------------------------------------------------------
         # 1) HS-Prüfung via integrity_check.py
