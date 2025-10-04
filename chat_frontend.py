@@ -56,20 +56,23 @@ def check_expiry_and_extend(state):
         print("Fehler bei Ablaufprüfung:", e)
 
 def remove_extra_phrases(text):
-    """Entfernt unerwünschte Fragen oder Kommentarzeilen"""
-    if not isinstance(text, (str, dict)):
-        return text
+    """Entfernt unerwünschte Backend-Kommentare rekursiv"""
     if isinstance(text, dict):
-        # Falls das Backend JSON mit {"message": "..."} sendet
-        msg = text.get("message", "")
-    else:
-        msg = text
+        cleaned = {}
+        for k, v in text.items():
+            cleaned[k] = remove_extra_phrases(v)
+        return cleaned
 
-    # Prüft auf Einleitungen typischer Kommentare
-    for phrase in ["Möchtest du", "Willst du", "Soll ich"]:
-        if phrase in msg:
-            msg = msg.split(phrase)[0]
-    return msg.strip()
+    if isinstance(text, list):
+        return [remove_extra_phrases(v) for v in text]
+
+    if isinstance(text, str):
+        for phrase in ["Möchtest du", "Willst du", "Soll ich"]:
+            if phrase in text:
+                text = text.split(phrase)[0]
+        return text.strip()
+
+    return text
         
 
 
