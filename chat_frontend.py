@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timezone
 
 # Backend-URL
-BACKEND_URL = "https://elaris-verify-backend.onrender.com"
+BACKEND_URL = "http://127.0.0.1:10000"
 
 # Trigger-Fragen für Stufe 2
 TRIGGERS = [
