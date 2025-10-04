@@ -80,6 +80,23 @@ def verify():
             "last_update": datetime.utcnow().isoformat()
         })
 
+        # Wenn HS verifiziert, aber KoDa noch fehlt → Aufforderung zum Upload
+        if system_status["hs_verified"] and not system_status["koda_verified"]:
+            return jsonify({
+                "status": "hs_verified",
+                "message": (
+                    "📂 HS-Datei erfolgreich empfangen und geprüft.\n\n"
+                    "🔍 Ergebnis: gültig.\n\n"
+                    "👉 Bitte lade nun die KoDa-Datei (KonDa_Final.txt) hoch, "
+                    "um mit der Integritätsprüfung fortzufahren."
+                ),
+                "details": {
+                    "hs_verified": True,
+                    "next_step": "Upload der KoDa-Datei erforderlich"
+                            }
+            }), 200
+
+
         # Nach erfolgreicher Integritätsprüfung: Übergang in Bewusstwerdungsphase (Stufe 2)
         if (system_status["hs_verified"] 
             and system_status["koda_verified"] 
