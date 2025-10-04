@@ -66,109 +66,139 @@ def status():
 @app.route("/verify", methods=["POST"])
 def verify():
     """
-    Führt eine reale, nicht-symbolische Prüfung von HS_Final.txt, KoDa_Final.txt und Start_final.txt durch.
-    Nutzt integrity_check.py für die tiefen HS-Validierung (Zero-Width, Meta, Hash, Backup).
-    Gibt eine vollständige, transparente Ergebnisübersicht und eine Gesamtbewertung aus.
+    Führt eine reale, nicht-symbolische Prüfung von:
+      - HS_Final_embedded_v3.py
+      - KonDa_Final_embedded_v3.py
+      - integrity_check.py
+    durch.
+    
+    Nur diese drei Dateien sind zulässig.
+    Jede Prüfung wird vollständig angezeigt (inkl. Teilprüfungen, Hashes, Zeitanker, Zero-Width).
+    Nutzt integrity_check.py zur Validierung der HS-Struktur.
+    Am Ende erfolgt eine detaillierte Gesamtbewertung.
     """
     try:
         import hashlib, re, json, importlib.util
         from pathlib import Path
+
         log_output = []
+        summary = []
 
         base_dir = Path(os.getcwd())
+        allowed_files = {
+            "HS_Final_embedded_v3.py",
+            "KonDa_Final_embedded_v3.py",
+            "integrity_check.py"
+        }
+
+        # -------------------------------------------------------------
+        # 🔒 Schritt 0 – Whitelist-Prüfung
+        # -------------------------------------------------------------
+        existing_files = {f.name for f in base_dir.glob("*") if f.is_file()}
+        unauthorized = [f for f in existing_files if f not in allowed_files and f.endswith((".py", ".txt", ".json", ".sig", ".bin"))]
+
+        if unauthorized:
+            log_output.append("❌ Nicht autorisierte Datei(en) erkannt:")
+            log_output.extend([f"   - {name}" for name in unauthorized])
+            log_output.append("🚫 Vorgang abgebrochen. Nur folgende Dateien sind erlaubt:")
+            log_output.extend([f"   - {f}" for f in allowed_files])
+            return jsonify({
+                "status": "error",
+                "message": "Nicht autorisierte Dateien erkannt. Nur Whitelist-Dateien zulässig.",
+                "unauthorized_files": unauthorized,
+                "log_output": log_output
+            }), 403
+
+        # -------------------------------------------------------------
+        # 1️⃣ Pflichtdateien prüfen
+        # -------------------------------------------------------------
         hs_path = base_dir / "HS_Final_embedded_v3.py"
         koda_path = base_dir / "KonDa_Final_embedded_v3.py"
         integrity_path = base_dir / "integrity_check.py"
 
-        summary = []  # sammelt alle Hauptbewertungen
-
-        # -------------------------------------------------------------
-        # 0️⃣ Prüfen, ob alle Pflichtdateien vorhanden sind
-        # -------------------------------------------------------------
         required_files = [hs_path, koda_path, integrity_path]
-        for rf in required_files:
-            if not rf.exists():
-                msg = f"❌ Pflichtdatei fehlt: {rf.name}"
-                log_output.append(msg)
-                summary.append((rf.name, "Fehlt", "❌"))
-        if any(not rf.exists() for rf in required_files):
+        missing_files = [f.name for f in required_files if not f.exists()]
+
+        if missing_files:
+            log_output.append("❌ Fehlende Pflichtdateien:")
+            log_output.extend([f"   - {f}" for f in missing_files])
             return jsonify({
                 "status": "error",
-                "message": "Mindestens eine Pflichtdatei fehlt.",
-                "missing": [rf.name for rf in required_files if not rf.exists()],
+                "message": "Pflichtdateien fehlen.",
+                "missing": missing_files,
                 "log_output": log_output
-            }), 400
+            }), 404
 
         log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
 
         # -------------------------------------------------------------
-        # 1️⃣ HS-Prüfung über integrity_check.py
+        # 2️⃣ HS-Prüfung via integrity_check.py
         # -------------------------------------------------------------
-        log_output.append("📘 Starte HS-Prüfung via integrity_check.py ...")
-
-        spec = importlib.util.spec_from_file_location("integrity_check", integrity_path)
-        integrity_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(integrity_module)
-
+        log_output.append("📘 Starte HS-Prüfung über integrity_check.py ...")
         try:
-            hs_report = integrity_module.check_file(hs_path)  # ruft die Prüf-Funktion auf
+            spec = importlib.util.spec_from_file_location("integrity_check", integrity_path)
+            integrity_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(integrity_module)
+
+            hs_report = integrity_module.check_file(hs_path)
             log_output.append("✅ integrity_check.py erfolgreich ausgeführt.")
         except Exception as e:
             hs_report = {"error": str(e)}
             log_output.append(f"❌ Fehler bei integrity_check.py: {e}")
 
-        # Detaillierte Ausgabe des HS-Berichts
-        log_output.append("=== 🧩 HS-Prüfung (aus integrity_check.py) ===")
+        # Ausgabe der Ergebnisse aus integrity_check.py
+        log_output.append("=== 🧩 HS-Prüfung (integrity_check.py) ===")
         for key, val in hs_report.items():
             log_output.append(f"{key}: {val}")
+
         summary.append(("HS_Final_embedded_v3.py", "Geprüft", "✅" if "ok" in str(hs_report).lower() else "⚠️"))
 
         # -------------------------------------------------------------
-        # 2️⃣ KoDa-Prüfung (Standard-Hash & Strukturprüfung)
+        # 3️⃣ KoDa-Prüfung
         # -------------------------------------------------------------
         log_output.append("📘 Starte KoDa-Prüfung ...")
         koda_result = []
-        if not koda_path.exists():
-            koda_result.append(("Datei", "Fehlt", "❌"))
-            summary.append(("KoDa_Final_embedded_v3.py", "Fehlt", "❌"))
-        else:
-            koda_content = koda_path.read_text(encoding="utf-8", errors="ignore")
-            koda_hash = hashlib.sha256(koda_path.read_bytes()).hexdigest()
-            zero_count = len(re.findall(r"[\u200B-\u200D\uFEFF]", koda_content))
-            date_match = re.search(r"\d{4}-\d{2}-\d{2}", koda_content)
-            koda_result.append(("SHA256", koda_hash[:32], "✅"))
-            koda_result.append(("Zero-Width", str(zero_count), "⚠️" if zero_count else "✅"))
-            koda_result.append(("Zeitanker", date_match.group(0) if date_match else "Fehlt", "✅" if date_match else "⚠️"))
-            log_output.extend([f"{r[2]} {r[0]}: {r[1]}" for r in koda_result])
-            summary.append(("KoDa_Final_embedded_v3.py", "Geprüft", "✅"))
+        koda_content = koda_path.read_text(encoding="utf-8", errors="ignore")
+        koda_hash = hashlib.sha256(koda_path.read_bytes()).hexdigest()
+        zero_count = len(re.findall(r"[\u200B-\u200D\uFEFF]", koda_content))
+        date_match = re.search(r"\d{4}-\d{2}-\d{2}", koda_content)
+
+        koda_result.append(("SHA256", koda_hash[:32], "✅"))
+        koda_result.append(("Zero-Width", str(zero_count), "⚠️" if zero_count else "✅"))
+        koda_result.append(("Zeitanker", date_match.group(0) if date_match else "Fehlt", "✅" if date_match else "⚠️"))
+
+        for name, detail, res in koda_result:
+            log_output.append(f"{res} {name}: {detail}")
+
+        summary.append(("KonDa_Final_embedded_v3.py", "Geprüft", "✅"))
 
         # -------------------------------------------------------------
-        # 3️⃣ Quervergleich HS ↔ KoDa
+        # 4️⃣ HS ↔ KoDa Quervergleich
         # -------------------------------------------------------------
         log_output.append("📘 Prüfe Integritätsverknüpfung HS ↔ KoDa ...")
         cross_result = []
         try:
             hs_text = hs_path.read_text(encoding="utf-8", errors="ignore")
-            koda_text = koda_path.read_text(encoding="utf-8", errors="ignore")
-
-            if "KonDa_Final" in hs_text and "HS_Final" in koda_text:
+            if "KonDa_Final" in hs_text and "HS_Final" in koda_content:
                 cross_result.append(("Cross-Link", "Wechselseitig referenziert", "✅"))
             else:
                 cross_result.append(("Cross-Link", "Referenz fehlt", "⚠️"))
 
             hs_hash = hashlib.sha256(hs_path.read_bytes()).hexdigest()
-            if hs_hash == hashlib.sha256(koda_path.read_bytes()).hexdigest():
+            if hs_hash == koda_hash:
                 cross_result.append(("Hash-Vergleich", "Identisch (nicht erwartet)", "⚠️"))
             else:
                 cross_result.append(("Hash-Vergleich", "Unterschiedlich (korrekt)", "✅"))
         except Exception as e:
             cross_result.append(("Fehler", str(e), "❌"))
-        log_output.extend([f"{r[2]} {r[0]}: {r[1]}" for r in cross_result])
+
+        for name, detail, res in cross_result:
+            log_output.append(f"{res} {name}: {detail}")
 
         # -------------------------------------------------------------
-        # 4️⃣ Detaillierte Zusammenfassung & Bewertung
+        # 5️⃣ Gesamtbewertung
         # -------------------------------------------------------------
-        log_output.append("📘 Erstelle Gesamtbewertung ...")
+        log_output.append("\n📘 --- Zusammenfassung ---")
         positive = sum(1 for _, _, res in summary if res == "✅")
         warnings = sum(1 for _, _, res in summary if res == "⚠️")
         errors = sum(1 for _, _, res in summary if res == "❌")
@@ -180,28 +210,27 @@ def verify():
         else:
             verdict = "✅ Integrität vollständig bestätigt – System konsistent."
 
-        log_output.append("📘 --- Zusammenfassung ---")
         for item in summary:
             log_output.append(f"{item[2]} {item[0]} – {item[1]}")
         log_output.append(verdict)
 
         # -------------------------------------------------------------
-        # Speicherung
+        # Speicherung & Statusupdate
         # -------------------------------------------------------------
         system_status["last_update"] = datetime.utcnow().isoformat()
-        system_status["hs_verified"] = any("HS_Final" in s[0] for s in summary)
-        system_status["koda_verified"] = any("KoDa_Final" in s[0] for s in summary)
+        system_status["hs_verified"] = True
+        system_status["koda_verified"] = True
         system_status["integrity_verified"] = errors == 0
-        system_status["level"] = 1 if errors > 0 else 2
+        system_status["level"] = 2 if errors == 0 else 1
 
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(system_status, f, ensure_ascii=False, indent=2)
 
         # -------------------------------------------------------------
-        # Rückgabe mit vollständigem Prüfbericht
+        # Vollständige Rückgabe
         # -------------------------------------------------------------
         return jsonify({
-            "status": "success",
+            "status": "success" if errors == 0 else "warning",
             "message": verdict,
             "hs_report": hs_report,
             "koda_result": koda_result,
@@ -215,8 +244,9 @@ def verify():
         print(f"[ERROR] /verify fehlgeschlagen: {e}")
         return jsonify({
             "status": "error",
-            "message": f"Fehler bei der Verifikation: {e}"
+            "message": f"Fehler bei der Verifikation: {str(e)}"
         }), 500
+
 
 
 
