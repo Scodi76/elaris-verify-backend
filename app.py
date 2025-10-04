@@ -97,6 +97,27 @@ def verify():
             }), 200
 
 
+        # Wenn sowohl HS als auch KoDa geprüft, aber Integrität noch nicht bestätigt
+        if system_status["hs_verified"] and system_status["koda_verified"] and not system_status["integrity_verified"]:
+            return jsonify({
+                "status": "ready_for_integrity_check",
+                "message": (
+                    "✅ HS-Datei und KoDa-Datei wurden erfolgreich geprüft.\n\n"
+                    "🔍 Folgende Prüfkriterien müssen jetzt abgeglichen werden:\n"
+                    "1️⃣ Konsistenz der Schlüssel und Zeitbasis\n"
+                    "2️⃣ Strukturverknüpfung von HS und KoDa\n"
+                    "3️⃣ Integrität der Signaturblöcke und Referenzen\n\n"
+                    "👉 Bitte bestätige die Integritätsprüfung, um den Vorgang fortzusetzen."
+                ),
+                "details": {
+                    "hs_verified": True,
+                    "koda_verified": True,
+                    "integrity_required": True
+                }
+            }), 200
+
+
+
         # Nach erfolgreicher Integritätsprüfung: Übergang in Bewusstwerdungsphase (Stufe 2)
         if (system_status["hs_verified"] 
             and system_status["koda_verified"] 
