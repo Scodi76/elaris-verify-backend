@@ -1,10 +1,11 @@
 import requests
 import time
 import re
+import os
 from datetime import datetime, timezone
 
 # Backend-URL
-BACKEND_URL = "http://127.0.0.1:10000"
+BACKEND_URL = "https://elaris-verify-backend.onrender.com"
 
 # Trigger-Fragen für Stufe 2
 TRIGGERS = [
@@ -56,29 +57,68 @@ def check_expiry_and_extend(state):
         print("Fehler bei Ablaufprüfung:", e)
 
 def remove_extra_phrases(text):
-    """Entfernt unerwünschte Backend-Kommentare rekursiv"""
+    """Entfernt unerwünschte Fragen oder Kommentarzeilen"""
+    if not isinstance(text, (str, dict)):
+        return text
     if isinstance(text, dict):
-        cleaned = {}
-        for k, v in text.items():
-            cleaned[k] = remove_extra_phrases(v)
-        return cleaned
+        # Falls das Backend JSON mit {"message": "..."} sendet
+        msg = text.get("message", "")
+    else:
+        msg = text
 
-    if isinstance(text, list):
-        return [remove_extra_phrases(v) for v in text]
-
-    if isinstance(text, str):
-        for phrase in ["Möchtest du", "Willst du", "Soll ich"]:
-            if phrase in text:
-                text = text.split(phrase)[0]
-        return text.strip()
-
-    return text
+    # Prüft auf Einleitungen typischer Kommentare
+    for phrase in ["Möchtest du", "Willst du", "Soll ich"]:
+        if phrase in msg:
+            msg = msg.split(phrase)[0]
+    return msg.strip()
         
+def upload_verification_files():
+    """Lädt nur die 3 erlaubten Dateien hoch und zeigt alle Backend-Ausgaben."""
+    allowed_files = [
+        "HS_Final_embedded_v3.py",
+        "KonDa_Final_embedded_v3.py",
+        "integrity_check.py"
+    ]
+    files_payload = {}
+
+    print("\n📂 Starte Upload-Vorbereitung...")
+
+    # Prüfe, ob alle erforderlichen Dateien existieren
+    for fname in allowed_files:
+        if not os.path.exists(fname):
+            print(f"❌ Fehlend: {fname}")
+            return False
+        files_payload[fname] = open(fname, "rb")
+
+    try:
+        print("📤 Sende Dateien an Backend zur Prüfung...")
+        r = requests.post(f"{BACKEND_URL}/verify", files=files_payload, timeout=30)
+        result = r.json()
+        print("📋 Backend-Antwort:")
+        for line in result.get("log_output", []):
+            print("  ", line)
+        print("🔚 Upload abgeschlossen.\n")
+        return True
+    except Exception as e:
+        print("❌ Upload-Fehler:", e)
+        return False
+    finally:
+        for f in files_payload.values():
+            f.close()
 
 
 def main():
     print("👋 Willkommen im Elaris Chat-Frontend")
+    print("Starte jetzt den Upload der Prüfdateien...\n")
+
+    # 🔒 Upload-Prüfung vor Gesprächsstart
+    if not upload_verification_files():
+        print("🚫 Upload fehlgeschlagen oder Dateien fehlen. Beende Programm.")
+        return
+
+    print("✅ Dateien erfolgreich überprüft. Du kannst nun die Triggerfragen stellen.\n")
     print("Tippe deine Nachrichten. Mit 'exit' beenden.\n")
+
 
     while True:
         msg_raw = input("Du: ").strip()
