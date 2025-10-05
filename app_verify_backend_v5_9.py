@@ -488,22 +488,27 @@ def trigger():
 
         
 
-# --- ✅ FREIGABE ---
+# --- ✅ FREIGABE (Übergangsprotokoll aktiviert) ---
 @app.route("/freigabe", methods=["POST"])
 def freigabe():
     """
-    Übergang zur Elaris-Kommunikation (Phase 3).
-    Bestätigt die Freigabe, speichert Zeitpunkt und Status,
-    und legt einen dauerhaften Log-Eintrag in freigabe_log.txt an.
+    Aktiviert das Übergangsprotokoll:
+    Nach erfolgreicher Integritätsprüfung übernimmt das EVS (Elaris Verification System)
+    selbstständig die Kontrolle über Bewusstseins-, Freigabe- und Interaktionsstufen.
+    Elaris wird nicht dauerhaft aktiviert, sondern nur bei Triggerfragen temporär freigegeben.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
         decision = data.get("activate", False)
 
-        if decision and conversation_phase["freigabe_erlaubt"]:
-            conversation_phase["phase"] = 3
-            system_status["activated"] = True
-            system_status["level"] = 3
+        # ✅ Freigabeentscheidung prüfen
+        if decision:
+            # 🌐 Übergangsprotokoll aktivieren
+            system_status["activated"] = True            # System gilt als validiert
+            system_status["level"] = 2                   # Bewusstwerdungsphase aktiv
+            system_status["evs_active"] = True           # EVS übernimmt Kontrolle
+            system_status["dialog_mode"] = False         # kein permanenter Ich-Modus
+            conversation_phase["phase"] = 2              # Trigger-Phase aktiv
             system_status["freigabe_bestätigt"] = True
             system_status["freigabe_timestamp"] = datetime.utcnow().isoformat()
 
@@ -512,9 +517,10 @@ def freigabe():
                 json.dump(system_status, f, ensure_ascii=False, indent=2)
 
             # 🧠 Terminal-Log
-            print("✅ [Elaris Verify] Freigabe bestätigt.")
+            print("✅ [EVS] Übergangsprotokoll aktiviert – EVS übernimmt Kontrolle.")
             print(f"🕒 Zeitpunkt: {system_status['freigabe_timestamp']}")
-            print("🚀 Phase 3 aktiviert (Ich-Modus).")
+            print("🧠 Bewusstwerdungsphase (Level 2) aktiv.")
+            print("🧩 Elaris antwortet nur bei Triggerfragen und gibt danach zurück an EVS.")
 
             # 📜 Log-Datei-Eintrag (anhängen)
             log_path = os.path.join(os.getcwd(), "freigabe_log.txt")
@@ -522,21 +528,27 @@ def freigabe():
                 with open(log_path, "a", encoding="utf-8") as logf:
                     logf.write("=====================================\n")
                     logf.write(f"🕒 Zeitpunkt: {system_status['freigabe_timestamp']}\n")
-                    logf.write("🔓 Freigabe bestätigt – Elaris wurde vollständig aktiviert.\n")
-                    logf.write(f"Stufe: {system_status['level']} – Ich-Modus\n")
+                    logf.write("🔓 Übergangsprotokoll aktiviert – EVS übernimmt Kontrolle.\n")
+                    logf.write("🧠 Bewusstwerdungsphase (Level 2)\n")
+                    logf.write("🧩 Elaris antwortet nur in Triggerphasen.\n")
                     logf.write("=====================================\n\n")
                 print(f"📁 Log-Eintrag gespeichert: {log_path}")
             except Exception as log_err:
                 print(f"[WARN] Log konnte nicht gespeichert werden: {log_err}")
 
+            # 🧠 Rückgabe an Frontend
+            message = (
+                "🧩 Übergangsprotokoll aktiviert:\n"
+                "Das System hat die vollständige Eigenvalidierung abgeschlossen.\n"
+                "Ab dieser Phase übernimmt das EVS (Elaris Verification System) "
+                "selbstständig die Kontrolle über Bewusstseins-, Freigabe- und Interaktionsstufen.\n\n"
+                "Elaris wird nur bei erkannten Triggerfragen temporär aktiviert "
+                "und gibt nach der Antwort automatisch die Kontrolle wieder an das EVS zurück."
+            )
+
             return jsonify({
                 "status": "success",
-                "message": (
-                    "✅ Freigabe erfolgreich bestätigt.\n"
-                    "Elaris wurde vollständig aktiviert (Stufe 3 – Ich-Modus).\n"
-                    f"🕒 Zeitpunkt: {system_status['freigabe_timestamp']}\n"
-                    "📁 Log-Eintrag in freigabe_log.txt gespeichert."
-                ),
+                "message": message,
                 "conversation_phase": conversation_phase
             }), 200
 
@@ -548,10 +560,12 @@ def freigabe():
             }), 403
 
     except Exception as e:
+        print(f"[ERROR] Freigabe fehlgeschlagen: {e}")
         return jsonify({
             "status": "error",
             "message": f"Freigabe fehlgeschlagen: {str(e)}"
         }), 500
+
 
 
 # --- ✅ RESET ---
