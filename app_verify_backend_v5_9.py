@@ -299,19 +299,18 @@ def verify():
         log_output.append(line)
 
         # -------------------------------------------------------------
-        # 4b) Erweiterte Warnlogik + Benutzeroptionen
+        # 4b) Erweiterte Warnlogik + Benutzeroptionen (ohne Aktivierung)
         # -------------------------------------------------------------
         if warnings > 0 and errors == 0:
-            print("\n⚠️ Warnungen erkannt – Eingriff erforderlich.")
+            print("\n⚠️ Warnungen erkannt – Überprüfung erforderlich.")
             print("🧠 Elaris Verify hat eine semantische oder strukturelle Abweichung festgestellt.\n")
 
             print("📘 Optionen:")
-            print("1️⃣ Manuelle Aktivierung erzwingen – Elaris wird trotz Warnung aktiviert")
             print("2️⃣ Parser-Anomalie beheben – Versuch, Cross-Link strukturell zu rekonstruieren")
             print("3️⃣ Abbrechen – keine Änderungen")
             print("4️⃣ Analyse durchführen – detaillierte Ursachenuntersuchung\n")
 
-            # 🧩 Simulierter Eingabepunkt (Backend kann hier erweitert werden)
+            # 🧩 Standardverhalten: keine automatische Aktivierung
             user_choice = "3"  # Standardwert: keine Aktion
 
             try:
@@ -322,15 +321,8 @@ def verify():
             except Exception:
                 pass
 
-            # 🧠 Entscheidungspfad
-            if user_choice == "1":
-                print("🚀 Manuelle Aktivierung trotz Warnung eingeleitet ...")
-                system_status["integrity_verified"] = True
-                system_status["level"] = 2
-                verdict += " (manuell bestätigt)"
-                log_output.append("⚙️ Manuelle Aktivierung durchgeführt – Warnung übersteuert.")
-
-            elif user_choice == "2":
+            # 🧠 Entscheidungspfad ohne Aktivierungsoption
+            if user_choice == "2":
                 print("🔧 Starte automatische Parser-Reparatur ...")
                 log_output.append("🔧 Parser-Anomalie erkannt – Rekonstruktion gestartet.")
                 # Beispielhafte Parser-Korrektur (Dummy)
