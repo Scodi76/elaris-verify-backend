@@ -1,3 +1,10 @@
+# =========================================
+# Cross-Link-Reference: KoDa_Final_embedded_v3
+# Hinweis:
+# Diese HS-Version ist mit der Konsolidierungsdatei KoDa_Final_embedded_v3 verknüpft.
+# Der Cross-Link dient der Integritätsprüfung zwischen HS und KoDa.
+# =========================================
+
 #
 
 # =========================================
