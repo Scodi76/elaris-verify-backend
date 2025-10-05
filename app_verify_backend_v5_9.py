@@ -203,9 +203,9 @@ def verify():
                 "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
                 "missing": missing
             }), 400
-
-        # ✅ Erfolgsrückgabe
-        log_output.append("✅ Alle erforderlichen Dateien vorhanden. Integritätsprüfung erfolgreich abgeschlossen.")
+        
+        # Wenn keine Pflichtdateien fehlen
+        log_output.append("✅ Alle erforderlichen Dateien vorhanden.")
         return jsonify({
             "status": "ok",
             "message": "Integritätsprüfung erfolgreich abgeschlossen.",
@@ -219,7 +219,6 @@ def verify():
             "status": "error",
             "message": f"Integritätsprüfung fehlgeschlagen: {str(e)}"
         }), 500
-
 
 
 
