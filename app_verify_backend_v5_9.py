@@ -192,7 +192,7 @@ def verify():
         required_files = [hs_path, koda_path, integrity_path]
         missing = [f.name for f in required_files if not f.exists()]
         if missing:
-            print("❌ Fehlende Pflichtdateien:", ", ".join(mis
+            print("❌ Fehlende Pflichtdateien:", ", ".join(mis))
 
 
 
