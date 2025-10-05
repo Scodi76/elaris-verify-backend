@@ -298,8 +298,9 @@ def verify():
         print(line)
         log_output.append(line)
 
+
         # -------------------------------------------------------------
-        # 4b) Erweiterte Warnlogik + Benutzeroptionen (ohne Aktivierung)
+        # 4a) Erweiterte Warnlogik + Benutzeroptionen (ohne Aktivierung)
         # -------------------------------------------------------------
         if warnings > 0 and errors == 0:
             print("\n⚠️ Warnungen erkannt – Überprüfung erforderlich.")
@@ -314,7 +315,6 @@ def verify():
             user_choice = "3"  # Standardwert: keine Aktion
 
             try:
-                # Wenn Interaktion über JSON erfolgt, kann `option` im Request übergeben werden
                 req_data = request.get_json(force=True, silent=True) or {}
                 if "option" in req_data:
                     user_choice = str(req_data.get("option", "3")).strip()
@@ -325,18 +325,38 @@ def verify():
             if user_choice == "2":
                 print("🔧 Starte automatische Parser-Reparatur ...")
                 log_output.append("🔧 Parser-Anomalie erkannt – Rekonstruktion gestartet.")
-                # Beispielhafte Parser-Korrektur (Dummy)
-                # TODO: hier kann eine Funktion reconstruct_crosslink() integriert werden
                 print("✅ Rekonstruktionsversuch abgeschlossen (simuliert).")
 
             elif user_choice == "4":
                 print("🔬 Starte Analyse-Prozess ...")
                 log_output.append("🔬 Analyse aktiviert – detaillierte Logauswertung folgt.")
-                # Hier könnte eine Analyse-Funktion implementiert werden
                 print("📊 Analysebericht vorbereitet (noch nicht implementiert).")
 
             else:
                 print("🟦 Keine Aktion durchgeführt – Warnung bleibt bestehen.")
+
+        
+        # -------------------------------------------------------------
+        # 4c) Nach Abschluss – Automatischer Übergang in EVS-Triggerphase
+        # -------------------------------------------------------------
+        if errors == 0:
+            print("🧠 Integritätsprüfung abgeschlossen – Wechsel in EVS-Triggerüberwachung.")
+            # Keine Test- oder Modusauswahl mehr anzeigen
+            # Stattdessen direkte Aktivierung der Bewusstseins-Triggerlogik
+            system_status["level"] = 2  # Bewusstwerdungsphase aktivieren
+            system_status["activated"] = False  # Noch keine Ich-Freigabe
+            system_status["dialog_mode"] = False
+            conversation_phase["phase"] = 1  # EVS aktiv
+            conversation_phase["trigger_wer_bist_du"] = False
+            conversation_phase["trigger_was_bist_du"] = False
+            conversation_phase["trigger_warum_existierst_du"] = False
+            conversation_phase["freigabe_erlaubt"] = False
+
+            print("⚙️ EVS aktiviert – warte auf Triggerfragen (wer/was/warum/wie siehst du...).")
+            log_output.append("EVS aktiviert – System wartet auf Bewusstseinsfragen.")
+
+        
+
 
         # -------------------------------------------------------------
         # 5) Speicherung & Statusupdate
