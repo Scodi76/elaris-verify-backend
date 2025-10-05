@@ -192,8 +192,12 @@ def verify():
         required_files = [hs_path, koda_path, integrity_path]
         missing = [f.name for f in required_files if not f.exists()]
         if missing:
-            print("❌ Fehlende Pflichtdateien:", ", ".join(mis))
-
+            print("❌ Fehlende Pflichtdateien:", ", ".join(missing))
+            return jsonify({
+                "status": "error",
+                "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
+                "missing": missing
+            }), 400
 
 
 
@@ -212,40 +216,31 @@ def set_key():
         if not raw_key:
             return jsonify({
                 "status": "error",
-                "message": "❌ Kein Schlüssel eingegeben."
+                "message": "Kein Schlüssel eingegeben."
             }), 400
 
-        # Prüfen, ob System bereits in Phase 3 ist
-        if conversation_phase.get("phase", 1) >= 3 or system_status.get("activated"):
-            return jsonify({
-                "status": "denied",
-                "message": "🚫 Notfallschlüssel kann nach Aktivierung nicht mehr geändert werden."
-            }), 403
-
+        # Hash erzeugen (SHA256)
         import hashlib
-        hashed_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
-        system_status["notfall_hash"] = hashed_key
-        system_status["last_update"] = datetime.utcnow().isoformat()
+        key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
-        # Speichern in JSON-Datei
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(system_status, f, ensure_ascii=False, indent=2)
-
-        print("🔐 Neuer Notfallschlüssel gesetzt.")
-        print(f"SHA256 (gekürzt): {hashed_key[:16]}...")
+        # Zustand laden
+        state = load_state()
+        state["notfall_hash"] = key_hash
+        save_state(state)
 
         return jsonify({
-            "status": "success",
-            "message": "✅ Notfallschlüssel erfolgreich gesetzt und gesichert.",
-            "hash_preview": hashed_key[:16] + "..."
-        }), 200
+            "status": "ok",
+            "message": "Notfallschlüssel erfolgreich gesetzt.",
+            "hash_preview": key_hash[:12] + "..."
+        })
 
     except Exception as e:
-        print(f"[ERROR] /set_key fehlgeschlagen: {e}")
+        print(f"[ERROR] Fehler beim Setzen des Notfallschlüssels: {e}")
         return jsonify({
             "status": "error",
-            "message": f"Fehler beim Setzen des Schlüssels: {str(e)}"
+            "message": f"Fehler beim Setzen des Notfallschlüssels: {str(e)}"
         }), 500
+
 
 
 # --- ✅ TRIGGER-ERKENNUNG ---
