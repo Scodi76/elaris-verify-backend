@@ -112,9 +112,13 @@ def verify():
                     log_output.append(f"[WARN] Datei {f.name} konnte nicht verschoben werden: {e}")
                     print(f"[WARN] Verschiebung von {f.name} fehlgeschlagen: {e}")
 
-        # Optional: StartUpManager über stillen Befehl informieren (nicht sichtbar)
+        # Optional: StartUpManager über stillen Befehl informieren
         try:
-            subprocess.Popen(["python", "startup_manager_gui.py", "--sync-final"], cwd=base_dir, creationflags=subprocess.CREATE_NO_WINDOW)
+            subprocess.Popen(
+                ["python", "startup_manager_gui.py", "--sync-final"],
+                cwd=base_dir,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             log_output.append("🛰️ Silent-Trigger an Startup Manager gesendet (--sync-final).")
         except Exception as e:
             log_output.append(f"[WARN] StartupManager konnte nicht benachrichtigt werden: {e}")
@@ -191,6 +195,7 @@ def verify():
 
         required_files = [hs_path, koda_path, integrity_path]
         missing = [f.name for f in required_files if not f.exists()]
+
         if missing:
             print("❌ Fehlende Pflichtdateien:", ", ".join(missing))
             return jsonify({
@@ -198,6 +203,23 @@ def verify():
                 "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
                 "missing": missing
             }), 400
+
+        # ✅ Erfolgsrückgabe
+        log_output.append("✅ Alle erforderlichen Dateien vorhanden. Integritätsprüfung erfolgreich abgeschlossen.")
+        return jsonify({
+            "status": "ok",
+            "message": "Integritätsprüfung erfolgreich abgeschlossen.",
+            "checked_files": [f.name for f in required_files],
+            "log_output": log_output
+        }), 200
+
+    except Exception as e:
+        print(f"[ERROR] Prüfprozess abgebrochen: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Integritätsprüfung fehlgeschlagen: {str(e)}"
+        }), 500
+
 
 
 
