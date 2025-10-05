@@ -1,1 +1,1 @@
-python app_verify_backend_v5_9.py
+web: python app_verify_backend_v5_9.py
