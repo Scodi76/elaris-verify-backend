@@ -72,8 +72,8 @@ def verify():
     durch.
 
     Nur diese drei Dateien sind als Upload/Prüfgrundlage zulässig.
-    HS_Final.txt und KonDa_Final.txt (sowie deren signature.json) sind EXPLIZIT VERBOTEN.
-    Jede Prüfung wird vollständig angezeigt; am Ende erfolgt eine detaillierte Gesamtbewertung.
+    Alle anderen Varianten (First/Final/.signature.json) sind verboten
+    und werden automatisch entfernt, bevor der Prozess startet.
     """
     try:
         import hashlib, re, json, importlib.util, tempfile, shutil, subprocess
@@ -84,18 +84,87 @@ def verify():
         summary = []
 
         # ==========================================================
-        # 📂 0) Automatische Verschiebung vorbereiteter Dateien
+        # 🧹 Früh-Cleanup: Nur Embedded-Dateien dürfen existieren
         # ==========================================================
         base_dir = Path(os.getcwd())
+        cleanup_targets = [
+            "HS_Final.txt",
+            "HS_Final_first.txt",
+            "HS_Final.txt.signature.json",
+            "KonDa_Final.txt",
+            "KonDa_Final_first.txt",
+            "KonDa_Final.txt.signature.json",
+            "Start_final.txt",
+        ]
+
+        removed_pre = []
+        for name in cleanup_targets:
+            path = base_dir / name
+            if path.exists():
+                try:
+                    os.remove(path)
+                    removed_pre.append(name)
+                except Exception as e:
+                    print(f"[WARN] Konnte {name} nicht entfernen: {e}")
+
+        if removed_pre:
+            print(f"[SECURITY] Früh-Cleanup ausgeführt – entfernt: {', '.join(removed_pre)}")
+            log_output.append(f"🧹 Früh-Cleanup ausgeführt – entfernt: {', '.join(removed_pre)}")
+        else:
+            log_output.append("🧹 Keine veralteten Final/First-Dateien vorhanden – OK.")
+
+        # ==========================================================
+        # 🧠 Adminmodus- oder Bestätigungseingabe prüfen (system / ja / nein)
+        # ==========================================================
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            user_input = str(data.get("message", "")).strip().lower()
+
+            # 🔧 Adminmodus aktivieren
+            if user_input == "system":
+                print("🔧 Adminmodus aktiviert – Zugriff auf Systemdateien erlaubt (vor Verifikation).")
+                return jsonify({
+                    "status": "admin_mode",
+                    "message": (
+                        "🔧 Adminmodus wurde aktiviert.\n"
+                        "Du kannst jetzt Systemdateien ersetzen, bearbeiten oder neu laden.\n\n"
+                        "⚠️ Die eigentliche Verifikation wurde pausiert."
+                    ),
+                    "hint": "Sende 'ja' zum Starten der echten Verifikation oder 'nein' zum Abbrechen."
+                }), 200
+
+            # ❌ Abbruch durch Benutzer
+            elif user_input in ["nein", "no"]:
+                print("❌ Verifikation abgebrochen durch Benutzer.")
+                return jsonify({
+                    "status": "cancelled",
+                    "message": "Verifikation wurde abgebrochen."
+                }), 200
+
+            # 🟨 Wenn kein „ja/system/nein“ gesendet wurde → Abfrage starten
+            elif user_input not in ["ja", "yes"]:
+                return jsonify({
+                    "status": "await_confirmation",
+                    "message": (
+                        "Bitte bestätige den Start der Verifikation:\n"
+                        "👉 'ja' zum Starten\n"
+                        "👉 'nein' zum Abbrechen\n"
+                        "👉 'system' für Adminmodus (vorzeitiger Zugriff)"
+                    )
+                }), 202
+        except Exception as e:
+            print(f"[WARN] Eingabeprüfung übersprungen: {e}")
+
+        # ==========================================================
+        # 📂 0) Automatische Verschiebung vorbereiteter Dateien
+        # ==========================================================
         upload_dir = Path(tempfile.gettempdir())
         final_build = base_dir / "final_build"
 
-        # Zielverzeichnis sicherstellen
         if not final_build.exists():
             final_build.mkdir(parents=True, exist_ok=True)
             log_output.append(f"📁 Zielverzeichnis erstellt: {final_build}")
 
-        # Dateien, die nach Erstellung verschoben werden sollen
         move_candidates = [
             base_dir / "HS_Final_embedded_v3.py",
             base_dir / "KonDa_Final_embedded_v3.py"
@@ -131,7 +200,7 @@ def verify():
         log_output.append(f"🔍 Zusätzliches Upload-Verzeichnis: {upload_dir}")
 
         # -------------------------------------------------------------
-        # 🚫 1) Striktes Verbot für .txt-Varianten
+        # 🚫 1) Striktes Verbot für .txt-Varianten (erneute Kontrolle)
         # -------------------------------------------------------------
         forbidden_explicit = {
             "HS_Final.txt",
@@ -163,7 +232,6 @@ def verify():
         for key, file in request.files.items():
             filename = secure_filename(file.filename)
             uploaded_names.append(filename)
-            # Strikte Kontrolle
             if filename.lower().endswith(".txt") or "final.txt" in filename.lower():
                 print(f"🚫 Verbotener Dateiname oder Typ erkannt: {filename}")
                 log_output.append(f"🚫 Verbotener Dateiname oder Typ erkannt: {filename}")
@@ -177,48 +245,171 @@ def verify():
         if not uploaded_names:
             log_output.append("📂 Keine Uploads im Request erkannt – prüfe lokales Verzeichnis.")
 
+
         # -------------------------------------------------------------
-        # ✅ 3) Erlaubte Dateien prüfen
-        # -------------------------------------------------------------
-        allowed_files = {
-            "HS_Final_embedded_v3.py",
-            "KonDa_Final_embedded_v3.py",
-            "integrity_check.py",
-        }
+# ✅ 3) Erlaubte Dateien prüfen
+# -------------------------------------------------------------
+allowed_files = {
+    "HS_Final_embedded_v3.py",
+    "KonDa_Final_embedded_v3.py",
+    "integrity_check.py",
+}
 
-        print("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
-        log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+print("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
 
-        hs_path = final_build / "HS_Final_embedded_v3.py"
-        koda_path = final_build / "KonDa_Final_embedded_v3.py"
-        integrity_path = base_dir / "integrity_check.py"
+hs_path = final_build / "HS_Final_embedded_v3.py"
+koda_path = final_build / "KonDa_Final_embedded_v3.py"
+integrity_path = base_dir / "integrity_check.py"
 
-        required_files = [hs_path, koda_path, integrity_path]
-        missing = [f.name for f in required_files if not f.exists()]
+required_files = [hs_path, koda_path, integrity_path]
+missing = [f.name for f in required_files if not f.exists()]
 
-        if missing:
-            print("❌ Fehlende Pflichtdateien:", ", ".join(missing))
-            return jsonify({
-                "status": "error",
-                "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
-                "missing": missing
-            }), 400
-        
-        # Wenn keine Pflichtdateien fehlen
-        log_output.append("✅ Alle erforderlichen Dateien vorhanden.")
-        return jsonify({
-            "status": "ok",
-            "message": "Integritätsprüfung erfolgreich abgeschlossen.",
-            "checked_files": [f.name for f in required_files],
-            "log_output": log_output
-        }), 200
+if missing:
+    print("❌ Fehlende Pflichtdateien:", ", ".join(missing))
+    return jsonify({
+        "status": "error",
+        "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
+        "missing": missing
+    }), 400
 
-    except Exception as e:
-        print(f"[ERROR] Prüfprozess abgebrochen: {e}")
+# Wenn keine Pflichtdateien fehlen
+log_output.append("✅ Alle erforderlichen Dateien vorhanden.")
+
+# ==========================================================
+# ✅ 4) HS + KoDa erfolgreich – Integritätsdatei erforderlich
+# ==========================================================
+
+# Prüfen, ob Integrity-Datei manuell hochgeladen wurde
+integrity_file_path = None
+for key, file in request.files.items():
+    filename = secure_filename(file.filename)
+    if filename.lower().endswith(".int") or filename.lower().endswith(".log"):
+        integrity_file_path = os.path.join(base_dir, filename)
+        file.save(integrity_file_path)
+        log_output.append(f"📥 Integritätsdatei empfangen: {filename}")
+
+# Wenn keine .int-Datei mitgeschickt wurde → Hinweis geben
+if not integrity_file_path or not os.path.exists(integrity_file_path):
+    log_output.append("⚠️ Keine Integritätsdatei erkannt – manuelles Hochladen erforderlich.")
+    return jsonify({
+        "status": "await_integrity_file",
+        "message": (
+            "💾 Nächster Schritt:\n"
+            "Bitte lade jetzt die Integritätsdatei (.int oder .log) hoch.\n"
+            "Diese Datei bestätigt die Prüfkette von HS und KoDa.\n\n"
+            "📎 Erwartete Datei: Integrity_Final_v3.int"
+        ),
+        "log_output": log_output,
+        "trigger_ready": False
+    }), 202  # 202 = accepted, wartet auf Datei
+
+# ==========================================================
+# ✅ 5) Integritätsdatei validieren
+# ==========================================================
+try:
+    from integrity_check import check_file
+    import hashlib
+
+    # HS erneut prüfen, um aktuellen Hash zu haben
+    result = check_file("HS_Final_embedded_v3.py")
+    if not result.get("verified", False):
         return jsonify({
             "status": "error",
-            "message": f"Integritätsprüfung fehlgeschlagen: {str(e)}"
+            "message": "Integritätsprüfung der HS-Datei fehlgeschlagen.",
+            "details": result
         }), 500
+
+    hs_hash = result.get("sha256")
+
+    # KoDa Hash separat berechnen
+    with open(koda_path, "rb") as fk:
+        koda_hash = hashlib.sha256(fk.read()).hexdigest()
+
+    # Erwarteten Gesamt-Hash bilden
+    expected_concat = f"{hs_hash}:{koda_hash}"
+    expected_hash = hashlib.sha256(expected_concat.encode()).hexdigest()
+
+    # .int-Datei einlesen und prüfen
+    with open(integrity_file_path, "r", encoding="utf-8") as f:
+        int_data = json.load(f)
+    received_hash = int_data.get("integrity_hash")
+
+    # Vergleich der Hashwerte
+    if expected_hash != received_hash:
+        log_output.append("❌ Hashabweichung zwischen HS/KoDa und Integrity-Datei.")
+        return jsonify({
+            "status": "integrity_mismatch",
+            "message": (
+                "❌ Integritätsprüfung fehlgeschlagen:\n"
+                "Die hochgeladene .int-Datei passt nicht zu den aktuellen HS/KoDa-Hashes."
+            ),
+            "expected_hash": expected_hash,
+            "received_hash": received_hash,
+            "log_output": log_output,
+            "trigger_ready": False
+        }), 409  # conflict
+
+    # Erfolgreich geprüft
+    log_output.append("✅ Integritätsprüfung erfolgreich – Systemstatus stabil.")
+    system_status["hs_verified"] = True
+    system_status["koda_verified"] = True
+    system_status["integrity_verified"] = True
+    system_status["last_update"] = datetime.utcnow().isoformat()
+
+    # ==========================================================
+    # 🧹 6) Cleanup: Entferne First- und Final-Dateien
+    # ==========================================================
+    try:
+        cleanup_targets = [
+            base_dir / "HS_Final_first.txt",
+            base_dir / "KonDa_Final_first.txt",
+            base_dir / "HS_Final.txt",
+            base_dir / "KonDa_Final.txt",
+        ]
+
+        removed = []
+        for f in cleanup_targets:
+            if f.exists():
+                os.remove(f)
+                removed.append(f.name)
+
+        if removed:
+            log_output.append(f"🧹 Cleanup abgeschlossen – entfernt: {', '.join(removed)}")
+            print(f"[CLEANUP] Entfernt: {', '.join(removed)}")
+        else:
+            log_output.append("🧽 Keine First/Final-Dateien zum Entfernen gefunden.")
+    except Exception as ce:
+        log_output.append(f"[WARN] Cleanup-Fehler: {ce}")
+        print(f"[WARN] Cleanup-Fehler: {ce}")
+
+    # ==========================================================
+    # 💾 7) Systemstatus speichern
+    # ==========================================================
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(system_status, f, ensure_ascii=False, indent=2)
+
+    # Erfolgsrückgabe
+    return jsonify({
+        "status": "ok",
+        "message": (
+            "✅ Integritätsprüfung erfolgreich abgeschlossen.\n"
+            "Systemstatus: stabil und gekoppelt.\n"
+            "🔁 Übergang in Triggerphase wird eingeleitet..."
+        ),
+        "checked_files": [f.name for f in required_files],
+        "integrity_hash": received_hash,
+        "trigger_ready": True,
+        "log_output": log_output
+    }), 200
+
+except Exception as e:
+    log_output.append(f"[ERROR] Integritätsprüfung abgebrochen: {e}")
+    return jsonify({
+        "status": "error",
+        "message": f"Integritätsprüfung abgebrochen: {e}",
+        "log_output": log_output
+    }), 500
 
 
 
