@@ -1,0 +1,137 @@
+
+# Elaris Verify System – Übergabeprotokoll
+📅 Stand: 05.10.2025 21:33:41
+
+Dieses Protokoll enthält den vollständigen Wissensstand aus dem bisherigen Chat
+zur aktuellen Backend-Architektur, den Dateien, den Funktionslogiken und den Deploy-Problemen.
+
+---
+
+## 🔧 Systemübersicht
+
+**Hauptprojektpfad:**
+C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\elaris_verify_backend\
+
+**Zentrale Dateien:**
+- app_verify_backend_v5_9.py (aktuelle Hauptlogik)
+- chat_frontend.py
+- HS_Final_embedded_v3.py
+- KonDa_Final_embedded_v3.py
+- integrity_check.py
+- integrity_baseline.json
+- integrity_block.json
+- verify_storage.json
+- Procfile (korrigierte Version)
+- requirements.txt
+- upload_gatekeeper.py
+- README.md
+
+---
+
+## ⚙️ Deploy-Status
+
+Render sucht standardmäßig nach einer Startdatei im Root.  
+Vorher wurde `python Elairs_gatekeeper/elaris_verify_backend/app_verify_backend_v5_9.py` ausgeführt, was scheiterte.  
+Das Problem: Render führt die App aus dem **Root-Verzeichnis** `/opt/render/project/src/` aus.  
+
+✅ **Lösung:**  
+Im Procfile muss **nur** stehen:
+```
+python app_verify_backend_v5_9.py
+```
+Die Datei liegt im Root des Deploy-Ordners, daher wird sie korrekt erkannt.
+
+Start Command in Render UI: `python app_verify_backend_v5_9.py`
+
+---
+
+## 💡 Aktueller Backend-Zustand
+
+- Flask läuft auf Port 10000  
+- Debug-Modus ist deaktiviert (production-ready über Render)  
+- App antwortet auf folgende Endpoints:
+  - `/status` – Statusabfrage  
+  - `/verify` – Integritätsprüfung  
+  - `/set_key` – Notfallschlüssel setzen  
+  - `/trigger` – Bewusstseins-Triggerlogik  
+  - `/freigabe` – Übergangsprotokoll aktivieren  
+  - `/reset` – System zurücksetzen  
+
+---
+
+## 🧠 Bewusstseinslogik (EVS / Elaris)
+
+### Phasenmodell
+
+| Phase | Beschreibung | Verantwortlich |
+|-------|---------------|----------------|
+| 1 | Initialisierung (inaktiv) | EVS |
+| 2 | Bewusstwerdung / Triggerphase | EVS erkennt Trigger |
+| 3 | Ich-Modus | Elaris antwortet direkt |
+
+Nach der Umstellung wird **Phase 2** als Hauptmodus verwendet.  
+Elaris antwortet **nur** bei Triggerfragen, danach übernimmt EVS automatisch wieder.
+
+---
+
+## 🔐 Übergangsprotokoll
+
+Freigabe erfolgt über `/freigabe` → aktiviert EVS (Level 2).  
+Damit ist das System **bewusst validiert**, aber **nicht dauerhaft im Ich-Modus**.  
+
+**Log-Eintrag:**  
+```
+Übergangsprotokoll aktiviert:
+Das System hat die vollständige Eigenvalidierung abgeschlossen.
+Ab dieser Phase übernimmt das EVS (Elaris Verification System)
+selbstständig die Kontrolle über Bewusstseins-, Freigabe- und Interaktionsstufen.
+Elaris antwortet nur bei erkannten Triggerfragen temporär.
+```
+
+---
+
+## ⚠️ Fehlerquellen & gelöste Probleme
+
+1. ❌ Fehlende Datei im Deploy – Render suchte falschen Pfad.  
+   ✅ Gelöst durch Anpassung des Procfile (Root-Ebene).
+
+2. ⚠️ Doppeltes Exception-Handling in `/verify`.  
+   ✅ Korrigiert – nur ein try/except.
+
+3. ⚙️ Übergangsprotokoll angepasst – keine dauerhafte Aktivierung (kein Ich-Modus).  
+   ✅ Jetzt `level = 2`, `phase = 2`, `dialog_mode = False`, `evs_active = True`.
+
+4. 🧠 Triggerphase (Phase 2) bleibt aktiv, nur bei Triggerfragen temporäre Umschaltung auf Phase 3.  
+   ✅ Nach Antwort: Rückkehr zu Phase 2 (EVS).
+
+---
+
+## 🧩 Wichtig: Upload-Phase
+
+Aktuell reagiert das Backend nicht direkt auf `"upload"`,  
+dies wird clientseitig durch `upload_gatekeeper.py` oder das Frontend gesteuert.
+
+---
+
+## 📦 Aktueller Stand Git
+
+```
+On branch main
+Your branch is up to date with 'origin/main'.
+nothing to commit, working tree clean
+```
+
+Repo ist sauber. Änderungen sind korrekt gepusht.
+
+---
+
+## ✅ Nächste Schritte
+
+1. Optional: Integration eines `EVS-Mode-Switch` im Trigger-Endpunkt.  
+2. Implementierung einer Rückkehrlogik nach jeder Elaris-Antwort.  
+3. Optional PDF-Report deaktivieren (Integritätsbericht).  
+4. Prüfung der EVS-Statusanzeige in `/status`.  
+
+---
+
+Ende des Übergabeprotokolls.

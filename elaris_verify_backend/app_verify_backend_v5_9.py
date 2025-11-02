@@ -10,6 +10,32 @@ import tempfile
 import subprocess
 from werkzeug.utils import secure_filename
 
+
+# --- 🧾 AUDIT-LOG EINSTELLUNGEN ---
+AUDIT_LOG_FILE = "upload_log.json"
+
+def write_audit_log(entry: dict):
+    """
+    Schreibt einen Upload-Audit-Eintrag in upload_log.json.
+    Erstellt Datei bei Bedarf und hängt an, um Manipulationsschutz zu sichern.
+    """
+    try:
+        log_path = Path(AUDIT_LOG_FILE)
+        logs = []
+        if log_path.exists():
+            with open(log_path, "r", encoding="utf-8") as f:
+                logs = json.load(f)
+                if not isinstance(logs, list):
+                    logs = []
+
+        logs.append(entry)
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(logs, f, ensure_ascii=False, indent=2)
+    except Exception as log_err:
+        print(f"[WARN] Audit-Log konnte nicht geschrieben werden: {log_err}")
+
+
+
 # --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
 
@@ -88,7 +114,7 @@ def verify():
       - HS_Final_embedded_v3.py
       - KonDa_Final_embedded_v3.py
       - integrity_check.py
-    durch.
+    durch, inklusive Audit-Logging.
     """
     log_output = []
     try:
@@ -96,13 +122,48 @@ def verify():
         from pathlib import Path
         from werkzeug.utils import secure_filename
 
+        # --- 🔍 Audit-Log: Upload-Versuch erfassen ---
+        client_ip = request.remote_addr or "unknown"
+        upload_entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "client_ip": client_ip,
+            "file": None,
+            "size_bytes": None,
+            "status": "pending",
+            "message": ""
+        }
+
+        if request.files:
+            for f in request.files.values():
+                f.seek(0, os.SEEK_END)
+                upload_entry["file"] = f.filename
+                upload_entry["size_bytes"] = f.tell()
+                f.seek(0)
+        else:
+            upload_entry["file"] = "direct_payload"
+            upload_entry["size_bytes"] = len(request.data or b"")
+
+        def finalize_audit(status_text: str, http_code: int, message: str):
+            upload_entry.update({
+                "status": status_text,
+                "http_code": http_code,
+                "message": message
+            })
+            try:
+                # Datei-Hash ermitteln, falls vorhanden
+                if upload_entry.get("file") and os.path.exists(upload_entry["file"]):
+                    with open(upload_entry["file"], "rb") as ftmp:
+                        upload_entry["sha256"] = hashlib.sha256(ftmp.read()).hexdigest()
+            except Exception:
+                pass
+            write_audit_log(upload_entry)
+
         summary = []
 
         # ==========================================================
         # 🚫 Sicherheits-Check: Nur *_embedded_v3* Dateien zulassen
         # ==========================================================
         try:
-            # Wenn Upload über Datei-Formular erfolgt
             if request.files:
                 for f in request.files.values():
                     filename = f.filename.lower()
@@ -116,20 +177,20 @@ def verify():
                             "message": f"❌ Upload verweigert: '{filename}' ist keine *_embedded_v3*-Datei.",
                             "hint": "Nur HS_Final_embedded_v3.py und KonDa_Final_embedded_v3.py sind erlaubt."
                         }
+                        finalize_audit("rejected", 400, response["message"])
                         print(f"[SECURITY] Upload blockiert: {response}")
                         return jsonify(response), 400
-
             else:
-                # Wenn kein klassisches multipart-Upload, sondern ein File-Pfad übermittelt wird
                 if "embedded_v3" not in str(request.data).lower():
+                    msg = "❌ Upload verweigert: Datei entspricht nicht dem *_embedded_v3*-Format."
+                    finalize_audit("rejected", 400, msg)
                     return jsonify({
                         "status": "rejected",
-                        "message": "❌ Upload verweigert: Datei entspricht nicht dem *_embedded_v3*-Format.",
+                        "message": msg,
                         "hint": "Bitte nur geprüfte Embedded-Versionen hochladen."
                     }), 400
         except Exception as sec_err:
             print(f"[WARN] Sicherheitsprüfung konnte nicht durchgeführt werden: {sec_err}")
-
 
         # ==========================================================
         # 📏 Größenlimit für Uploads (max. 1 MB)
@@ -141,15 +202,14 @@ def verify():
                 size = f.tell()
                 f.seek(0)
                 if size > MAX_UPLOAD_SIZE:
+                    msg = f"❌ Upload verweigert: Datei '{f.filename}' überschreitet das 1 MB-Limit."
+                    finalize_audit("too_large", 413, msg)
                     return jsonify({
                         "status": "rejected",
-                        "message": f"❌ Upload verweigert: Datei '{f.filename}' überschreitet das 1 MB-Limit.",
+                        "message": msg,
                         "size_bytes": size,
                         "hint": "Bitte nur geprüfte *_embedded_v3.py-Dateien unter 1 MB hochladen."
                     }), 413  # HTTP 413 Payload Too Large
-
-
-        
 
         # ==========================================================
         # 🧠 Adminmodus / Bestätigung
@@ -158,14 +218,17 @@ def verify():
             data = request.get_json(force=True, silent=True) or {}
             user_input = str(data.get("message", "")).strip().lower()
             if user_input == "system":
+                finalize_audit("admin_mode", 200, "Adminmodus aktiviert.")
                 return jsonify({
                     "status": "admin_mode",
                     "message": "Adminmodus aktiviert – Zugriff erlaubt.",
                     "hint": "Sende 'ja' zum Starten oder 'nein' zum Abbrechen."
                 }), 200
             elif user_input in ["nein", "no"]:
+                finalize_audit("cancelled", 200, "Abgebrochen.")
                 return jsonify({"status": "cancelled", "message": "Abgebrochen."}), 200
             elif user_input not in ["ja", "yes"]:
+                finalize_audit("await_confirmation", 202, "Bestätigung ausstehend.")
                 return jsonify({
                     "status": "await_confirmation",
                     "message": "Bitte 'ja' eingeben zum Starten oder 'system' für Adminmodus."
@@ -214,7 +277,8 @@ def verify():
         for d in [base_dir, upload_dir]:
             for f in forbidden:
                 if (d / f).exists():
-                    log_output.append(f"🚫 Verbotene Datei erkannt: {d / f}")
+                    msg = f"Verbotene Datei erkannt: {d / f}"
+                    finalize_audit("error", 403, msg)
                     return jsonify({
                         "status": "error",
                         "message": "Verbotene Datei erkannt (.txt oder .signature.json).",
@@ -231,12 +295,13 @@ def verify():
         required = [hs_path, koda_path, integrity_path]
         missing = [f.name for f in required if not f.exists()]
         if missing:
+            msg = f"Pflichtdateien fehlen: {', '.join(missing)}"
+            finalize_audit("error", 400, msg)
             return jsonify({
                 "status": "error",
-                "message": f"Pflichtdateien fehlen: {', '.join(missing)}",
+                "message": msg,
                 "log_output": log_output
             }), 400
-
 
         # ==========================================================
         # 🧱 Dateiupload-Prüfung (Whitelist)
@@ -246,16 +311,13 @@ def verify():
 
         for filename in uploaded_names:
             if filename not in allowed_files:
+                msg = f"Ungültiger Dateiname '{filename}'."
+                finalize_audit("error", 400, msg)
                 return jsonify({
                     "status": "error",
-                    "message": f"Ungültiger Dateiname '{filename}'. "
-                               "Nur *_embedded_v3.py Dateien sind erlaubt.",
-                    "hint": "Bitte nur HS_Final_embedded_v3.py und "
-                            "KonDa_Final_embedded_v3.py verwenden."
-                 }), 400
-
-
-        
+                    "message": msg,
+                    "hint": "Nur *_embedded_v3.py Dateien sind erlaubt."
+                }), 400
 
         # ==========================================================
         # 🔐 Integritätsdatei prüfen / laden
@@ -269,6 +331,7 @@ def verify():
                 log_output.append(f"📥 Integritätsdatei empfangen: {filename}")
 
         if not integrity_file_path or not os.path.exists(integrity_file_path):
+            finalize_audit("await_integrity_file", 202, "Integritätsdatei fehlt.")
             return jsonify({
                 "status": "await_integrity_file",
                 "message": "Bitte Integritätsdatei (.int oder .log) hochladen.",
@@ -285,6 +348,7 @@ def verify():
 
             result = ic.check_file(str(hs_path))
             if not result.get("verified", False):
+                finalize_audit("error", 500, "Integritätsprüfung der HS-Datei fehlgeschlagen.")
                 return jsonify({
                     "status": "error",
                     "message": "Integritätsprüfung der HS-Datei fehlgeschlagen.",
@@ -301,6 +365,7 @@ def verify():
             received_hash = int_data.get("integrity_hash")
 
             if expected_hash != received_hash:
+                finalize_audit("integrity_mismatch", 409, "Integritäts-Hash stimmt nicht überein.")
                 return jsonify({
                     "status": "integrity_mismatch",
                     "message": "Integritäts-Hash stimmt nicht überein.",
@@ -323,6 +388,7 @@ def verify():
                 json.dump(system_status, f, ensure_ascii=False, indent=2)
             os.replace(tmp, STATE_FILE)
 
+            finalize_audit("ok", 200, "Integritätsprüfung erfolgreich abgeschlossen.")
             return jsonify({
                 "status": "ok",
                 "message": "Integritätsprüfung erfolgreich abgeschlossen.",
@@ -333,6 +399,7 @@ def verify():
 
         except Exception as e:
             log_output.append(f"[ERROR] Integritätsprüfung abgebrochen: {e}")
+            finalize_audit("error", 500, f"Integritätsprüfung abgebrochen: {e}")
             return jsonify({
                 "status": "error",
                 "message": f"Integritätsprüfung abgebrochen: {e}",
@@ -341,11 +408,13 @@ def verify():
 
     except Exception as e:
         log_output.append(f"[ERROR] Gesamte Verifikation abgebrochen: {e}")
+        finalize_audit("error", 500, f"Gesamte Verifikation abgebrochen: {e}")
         return jsonify({
             "status": "error",
             "message": f"Gesamte Verifikation abgebrochen: {str(e)}",
             "log_output": log_output
         }), 500
+
 
 
 

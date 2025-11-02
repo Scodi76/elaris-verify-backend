@@ -1,0 +1,8 @@
+{
+  "file": "HS_Final.txt",
+  "signature": "afe4bf976b805e221589bcab287e44694c90a815c7d0007424308df923b8e879",
+  "hash_algorithm": "SHA256",
+  "method": "HMAC",
+  "key_type": "sha256-hex",
+  "created_at": "2025-11-02T07:57:52.172127Z"
+}

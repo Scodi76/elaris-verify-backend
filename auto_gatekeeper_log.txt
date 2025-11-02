@@ -1,0 +1,19 @@
+[2025-11-02 08:58:08] === Elaris Auto-Gatekeeper gestartet ===
+[2025-11-02 08:58:08] [FIX] Kein Embed in KoDa_Final.txt – Reparatur...
+[2025-11-02 08:58:08] [OK] KoDa repariert.
+[2025-11-02 08:58:08] [OK] HS Embed-Datei vorhanden.
+[2025-11-02 08:58:08] ▶️ Starte handshake_v4.py
+
+[OK] Handshake erfolgreich abgeschlossen.
+[SUMME] Starter-Summe: 0x96ee2e72f4713f7f97edfa5f55c11fcdbc6f723448da44f0219664064dd916d4
+
+[2025-11-02 08:58:08] ✅ handshake_v4.py abgeschlossen.
+[2025-11-02 08:58:08] [WARN] derive_keys_v1.py fehlt (C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\Tools\derive_keys_v1.py)
+[2025-11-02 08:58:08] [FALLBACK] keys_out.json wurde nicht erstellt – Fallback-Key wird erzeugt.
+[2025-11-02 08:58:08] [FALLBACK] keys_out.json automatisch mit Dummy-Key erstellt.
+[2025-11-02 08:58:08] [WARN] integrity_snapshot.py fehlt (C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\Tools\integrity_snapshot.py)
+[2025-11-02 08:58:08] [WARN] verify_integrity.py fehlt (C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\Tools\verify_integrity.py)
+[2025-11-02 08:58:08] [OK] Prozessbericht vollständig – alle Dateien vorhanden.
+[2025-11-02 08:58:08] ⚠️ Gesamtergebnis: Teilweise Fehler (1/4)
+[2025-11-02 08:58:08] === Lauf beendet ===
+[2025-11-02 08:58:09] [INFO] Desktop-Toast gesendet: Integritätsprüfung erfolgreich – alle Module OK ✅

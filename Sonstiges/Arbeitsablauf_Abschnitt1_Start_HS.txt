@@ -1,0 +1,61 @@
+# Arbeitsabschnitt 1 – Start & HS-Phase (Zweitchat)
+
+## Ziel
+Den Upload-Gatekeeper (gatekeeper.py) im Modus „Start & HS“ korrekt durchlaufen lassen.  
+Nur **Start_final.txt** und **HS_Final.txt** werden berücksichtigt.
+
+---
+
+## Voraussetzungen
+- Dateien im Arbeitsverzeichnis:
+  - Start_final.txt
+  - HS_Final.txt
+- gatekeeper.py vorhanden und startbar.
+
+---
+
+## Ablauf
+
+### 1) Gatekeeper starten
+```powershell
+py -3.10 gatekeeper.py
+```
+Erwartete Ausgabe (Einzeiler):
+```
+→ Bitte gib exakt „Skript starten“ ein, um fortzufahren.
+```
+
+### 2) Start-Trigger auslösen
+Eingabe:
+```
+Skript starten
+```
+
+Falls HS fehlt → Hinweis „HS_Final.txt im Upload-Verzeichnis nicht vorhanden.“  
+Wenn HS vorhanden → Gatekeeper setzt ggf. mtime von HS still > Start.
+
+### 3) PASS-Block (HS)
+Wenn alles korrekt:
+```
+HS_Final.txt erkannt.
+das Skript wurde anhand der Vorgaben erfolgreich geprüft.
+Ergebnis:
+für den weiteren Verlauf freigegeben
+Prozess angehalten – Konsolidierungsdatei (KoDa) fehlt. Bitte die Datei „KonDa_Final.txt“ hochladen.
+```
+
+---
+
+## Kontrolle
+Zwischendurch Status prüfen mit:
+```
+check gate
+```
+Ausgabe zeigt Zeitstempel von Start & HS sowie „Session-Gate: OK/NICHT OK“.  
+
+---
+
+## Ergebnis dieses Abschnitts
+- Session-Gate (Start ↔ HS) verstanden und getestet.  
+- Gatekeeper liefert den PASS-Block für HS.  
+- Prozess stoppt erwartungsgemäß mit Hinweis auf KoDa (nächster Abschnitt).

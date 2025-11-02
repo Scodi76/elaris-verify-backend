@@ -1,0 +1,255 @@
+startup_manager_gui.py (v5.7 + Silent-Sync-Erweiterung)
+
+Es enthält:
+
+Funktionsbeschreibung (Zweck und Ablauf)
+
+Abhängigkeiten & Systemvoraussetzungen
+
+Modulübersicht (Struktur und interne Logik)
+
+Dateiverknüpfungen & interne Abhängigkeiten
+
+Silent-Sync-Mechanismus
+
+Interaktion mit dem Backend
+
+Ablaufdiagramm (Start bis Gatekeeper-Start)
+
+Fehlerbehandlung & Sicherheit
+
+Schritt-für-Schritt-Anleitung zum Nachbau
+
+Optionale Debug-/Testfunktionen
+
+🧠 1. Zweck & Hauptfunktion
+
+Der Elaris Startup Manager ist ein zentrales Verwaltungs- und Sicherheitswerkzeug
+für die Gatekeeper-Umgebung der Elaris-KI.
+
+Er erfüllt folgende Hauptaufgaben:
+
+Integritätsprüfung aller sicherheitsrelevanten Dateien (HS, KoDa, Start, Signaturen)
+
+ACL/NTFS-Prüfung, um Dateisystem-Zugriffe auf den aktuellen Benutzer zu beschränken
+
+Signaturerzeugung und -prüfung vor dem Start
+
+Baseline-Aktualisierung bei autorisierten Änderungen
+
+Automatische Wiederherstellung nach Reset
+
+Silent-Dateisynchronisation zwischen Backend (Verify-System) und Gatekeeper-Verzeichnis
+
+Manuelle Steuerung über GUI inkl. Loganzeige und Statusfelder
+
+Das Programm wird immer zuerst gestartet, bevor Elaris aktiviert wird.
+Es ist somit der erste Kontrollpunkt („Preflight Check“) vor der eigentlichen Erweckung.
+
+⚙️ 2. Systemvoraussetzungen & Abhängigkeiten
+Komponente	Beschreibung
+Python	≥ 3.10 (wegen Pathlib, datetime, tkinter-Kompatibilität)
+Betriebssystem	Windows 10 oder höher
+NTFS-Dateisystem	erforderlich für Berechtigungsprüfung (icacls)
+Bibliotheken	tkinter, hashlib, json, shutil, subprocess, pathlib, datetime, webbrowser, sys
+Externe Module	signature_guard (lokal, prüft Signaturen)
+Backend-Abhängigkeit	Elaris Verify Backend – sendet --sync-final an diesen Manager
+Pfadstruktur	muss im Ordner Elairs_gatekeeper liegen, da relative Pfade verwendet werden
+
+Ordnerstruktur (Minimal):
+
+Elairs_gatekeeper/
+│
+├── startup_manager_gui.py
+├── signature_guard.py
+├── generate_signing_key.py
+├── signiere_hs.py
+├── signiere_koda.py
+├── embed_starter_into_hs_v3.py
+├── embed_starter_into_koda_v3.py
+├── HS_Final.txt
+├── KonDa_Final.txt
+├── Start_final.txt
+└── ...
+
+🧩 3. Aufbau & Hauptmodule
+Bereich	Funktion
+Silent-Sync	Wird beim Aufruf mit --sync-final aktiviert. Dient als stiller Empfänger des Backend-Triggers.
+verify_ntfs_permissions()	Prüft NTFS-Zugriffsrechte. Nur aktueller Benutzer darf Vollzugriff haben.
+update_integrity_baseline()	Erstellt/aktualisiert integrity_baseline.json mit Hashwerten genehmigter Dateien.
+reset_system_files()	Setzt HS/KoDa auf Ursprungszustand zurück, löscht Log- und Schlüsseldateien.
+auto_initial_signatures()	Prüft Signaturen, generiert bei Bedarf neue.
+create_integrity_block()	Erstellt integrity_block.json mit Hashvergleich von HS und KoDa.
+start_gatekeeper()	Startet Hauptprozess auto_gatekeeper_run.py nach erfolgreicher Prüfung.
+GUI-Komponenten	Anzeigen, Buttons, Logausgabe, Statusfelder (ACL/Signatur).
+🔗 4. Dateiabhängigkeiten
+Datei	Funktion
+HS_Final.txt, KonDa_Final.txt	Hauptdateien der KI-Signaturbasis
+HS_Final_embedded_v3.py, KonDa_Final_embedded_v3.py	nach Embed-Vorgang generierte Sicherungsdateien
+HS_Final_first.txt, KonDa_Final_first.txt	Backup-Dateien für Restore
+signing_key.json	privater Schlüssel für HMAC
+verify_report.json	letzte Signaturprüfung
+integrity_baseline.json	autorisierte Referenz-Hashes
+integrity_block.json	aktuelle Hash-Zusammenfassung
+reset_status.json	Zeitstempel des letzten Reset
+sync_log.txt, sync_state.json	Silent-Sync-Protokolle
+auto_gatekeeper_run.py	Hauptstartmodul von Elaris
+signature_guard.py	Prüft Signaturen beim Start
+🛰️ 5. Silent-Sync Mechanismus (--sync-final)
+
+Der Mechanismus dient dazu, vom Backend (z. B. aus /verify) einen unsichtbaren Trigger
+an den Startup Manager zu senden.
+
+Ablauf:
+
+Das Backend führt am Ende der Integritätsprüfung diesen Befehl aus:
+
+subprocess.Popen(["python", "startup_manager_gui.py", "--sync-final"], creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+Der Startup Manager erkennt den Parameter --sync-final über:
+
+if "--sync-final" in sys.argv:
+
+
+Er prüft, ob im Verzeichnis ein Ordner final_build/ existiert.
+
+Schreibt Ergebnis in:
+
+sync_log.txt → Klartext-Eintrag
+
+sync_state.json → JSON mit Timestamp und Pfad
+
+Beendet sich ohne GUI.
+
+So kann das Backend verifizieren, dass die erzeugten HS/KoDa-Dateien verschoben wurden,
+ohne dass der Nutzer etwas sieht.
+
+🧱 6. Interaktion mit dem Backend
+Backend-Endpunkt	Aktion
+/verify	verschiebt HS/KoDa in final_build und startet den Startup Manager mit --sync-final
+startup_manager_gui.py	empfängt stillen Trigger, prüft Existenz, loggt Status
+sync_log.txt	dient als Nachweis für erfolgreiches Verschieben
+sync_state.json	erlaubt maschinelle Weiterverarbeitung (Monitoring)
+
+Keine Rückkommunikation über API! Der Vorgang bleibt einseitig und unsichtbar.
+
+🔄 7. Ablaufdiagramm
+[User/Backend]
+     │
+     ├─▶ /verify
+     │     ├─ Prüft Dateien
+     │     ├─ Verschiebt HS/KoDa → final_build/
+     │     └─ Startet: python startup_manager_gui.py --sync-final
+     │
+[Startup Manager]
+     ├─ Erkennt --sync-final
+     ├─ Prüft final_build/
+     ├─ Loggt Ergebnis → sync_log.txt
+     ├─ Erstellt sync_state.json
+     └─ Exit(0)
+
+
+Beim normalen Start:
+
+startup_manager_gui.py (ohne Parameter)
+├─ GUI öffnen
+├─ ACL prüfen
+├─ Signaturen prüfen
+├─ ggf. Auto-Signieren & Embed
+├─ Integritätsblock erzeugen
+└─ Gatekeeper starten
+
+🧰 8. Fehlerbehandlung & Sicherheit
+Bereich	Verhalten
+Fehlender Ordner final_build	Warnung im Log, keine GUI
+NTFS unsicher	Warnung + visuelle Anzeige
+Fehlende Signaturen	automatisches Signieren
+Fehlende HS/KoDa	Warnung + kein Gatekeeper-Start
+Fehler in Sync	schreibt [ERROR] in Log, beendet mit Exitcode 1
+
+Alle kritischen Aktionen sind durch try/except-Blöcke abgesichert.
+
+🧱 9. Nachbau-Anleitung (Schritt für Schritt)
+
+Verzeichnis erstellen
+
+C:\Elaris_Gatekeeper\
+
+
+Dateien kopieren:
+
+startup_manager_gui.py
+
+signature_guard.py
+
+signiere_hs.py, signiere_koda.py
+
+generate_signing_key.py
+
+embed_starter_into_hs_v3.py
+
+embed_starter_into_koda_v3.py
+
+Python 3.10+ installieren
+
+python --version
+
+
+Testlauf starten
+
+python startup_manager_gui.py
+
+
+Backend-Integration aktivieren
+
+Stelle sicher, dass /verify am Ende diesen Aufruf hat:
+
+subprocess.Popen(["python", "startup_manager_gui.py", "--sync-final"], creationflags=subprocess.CREATE_NO_WINDOW)
+
+
+Ergebnis prüfen
+
+Nach erfolgreichem Lauf:
+
+sync_log.txt enthält Zeitstempel
+
+sync_state.json zeigt Pfad final_build
+
+🧠 10. Debug & Kontrolle
+
+Sync prüfen
+
+type sync_log.txt
+
+
+Integritäts-Hash anzeigen
+
+more integrity_block.json
+
+
+Baseline autorisieren
+GUI-Button: „🧱 Baseline aktualisieren“
+
+Fehler beheben
+
+Bei [ERROR] im Log → Datei prüfen
+
+Bei ACL-Warnung → icacls-Berechtigungen anpassen
+
+✅ Fazit
+
+Der Startup Manager ist:
+
+🛡 Sicherheitsmodul
+
+🔄 Integrationsschicht
+
+📡 Silent-Receiver
+
+🧠 Automatischer Initialisierer
+
+💬 Bedienoberfläche
+
+Er ist die Schnittstelle zwischen Backend-Verify-System und dem lokalen Gatekeeper
+und ermöglicht so eine unsichtbare, aber vollständige Kontrolle über Datei-Integrität und Systemstart.

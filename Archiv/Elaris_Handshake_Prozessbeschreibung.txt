@@ -1,0 +1,95 @@
+
+Elaris Gatekeeper – Handshake-Prozess und Erzeugung von handshake_report.json
+============================================================================
+
+Stand: 2025-10-06 09:22:17
+Sicherheitsstufe: 5 – Backend-Vertrauensprüfung (Handshake)
+
+-------------------------------------------------------------
+1️⃣ Zweck des Handshake-Prozesses
+-------------------------------------------------------------
+Der Handshake-Prozess ist der Authentifizierungs- und Integritätsabgleich
+zwischen der lokalen Gatekeeper-Instanz und dem Elaris-Backend.
+Er stellt sicher, dass:
+
+• Die lokale HS- und KoDa-Struktur echt und unverändert ist.
+• Die Backend-Verbindung autorisiert und konsistent ist.
+• Die Integritätsmodule (freigabe_gate_v1.py, HS, KoDa) echt sind.
+
+Der Handshake ist also der „digitale Handschlag“ zwischen Gatekeeper und Backend.
+
+-------------------------------------------------------------
+2️⃣ Wann der Handshake ausgeführt wird
+-------------------------------------------------------------
+
+Typ A – Initial-Handschlag (Setup)
+• Beim ersten Start oder nach einem vollständigen Reset.
+• Wenn kein aktiver Status vorliegt (activated=False).
+
+Typ B – Re-Handshake (Revalidation)
+• Wenn HS oder KoDa-Dateien geändert oder neu signiert wurden.
+• Vor jeder neuen Integritätsprüfung, falls Hashwerte nicht übereinstimmen.
+
+-------------------------------------------------------------
+3️⃣ Beteiligte Dateien und Module
+-------------------------------------------------------------
+• handshake_v4.py – Aktuelles Handshake-Modul
+• app_verify_backend_v5_9.py – Backendprüfung und Hashvergleich
+• elaris_verify_backend – Backendstruktur
+• handshake_report.json – Ergebnisdokument
+
+-------------------------------------------------------------
+4️⃣ Ablauf im Detail
+-------------------------------------------------------------
+1. handshake_v4.py wird durch auto_gatekeeper_run.py gestartet:
+   > python handshake_v4.py
+2. Lokaler Hash von HS und KoDa wird berechnet.
+3. Backend-Hash wird abgefragt.
+4. Beide Werte werden verglichen.
+5. Das Ergebnis wird in handshake_report.json gespeichert.
+
+-------------------------------------------------------------
+5️⃣ Aufbau der handshake_report.json
+-------------------------------------------------------------
+Beispiel:
+
+{
+  "timestamp": "2025-10-06T21:18:04Z",
+  "session_id": "ELARIS-SESSION-9AF7D",
+  "local_hash": "d7f891e17c9b...",
+  "backend_hash": "d7f891e17c9b...",
+  "status": "verified"
+}
+
+-------------------------------------------------------------
+6️⃣ Warum die Datei fehlen kann
+-------------------------------------------------------------
+Wenn das System bereits aktiviert und verifiziert ist,
+wird der Handshake übersprungen.
+Dann wird keine neue handshake_report.json erzeugt.
+
+Dies ist ein normaler Zustand bei aktivem Systembetrieb.
+
+-------------------------------------------------------------
+7️⃣ Manuelle Ausführung (optional)
+-------------------------------------------------------------
+Ein manueller Handshake kann jederzeit durchgeführt werden:
+
+PowerShell:
+> cd "C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper"
+> python handshake_v4.py
+
+Nach der Ausführung erscheint handshake_report.json im Hauptverzeichnis.
+
+-------------------------------------------------------------
+8️⃣ Fazit
+-------------------------------------------------------------
+• handshake_report.json wird nur bei Erststart oder Reset erstellt.
+• Sie dokumentiert den erfolgreichen Integritätsabgleich mit dem Backend.
+• Das Fehlen der Datei im laufenden Betrieb ist völlig normal.
+• Der Prozess wird durch handshake_v4.py gestartet und
+  durch app_verify_backend_v5_9.py validiert.
+
+-------------------------------------------------------------
+Ende der Prozessbeschreibung
+-------------------------------------------------------------

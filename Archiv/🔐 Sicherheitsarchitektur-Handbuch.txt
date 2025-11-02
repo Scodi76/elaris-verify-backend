@@ -1,0 +1,127 @@
+🔐 Sicherheitsarchitektur-Handbuch – Stufe 5 (Gatekeeper System)
+
+Projekt: Elaris Gatekeeper
+Ziel: Aufbau eines vollständig verifizierbaren, signierten, fälschungssicheren HS/KonDa-Systems mit stylometrischer Analyse, HMAC-Sicherung, unsichtbarer Metadaten-Integration und optionaler Autorensignatur
+Status: 💯 Laufbereit – alle Haupt- und Nebenfunktionen implementiert
+
+📁 1. Hauptdateien & Funktionen
+Datei	Funktion	Abhängigkeiten
+HS_Final.txt	Hauptskript (HS)	Wird signiert, analysiert, gesichert
+KonDa_Final.txt	Companion-Skript für KODA	Läuft synchron zum HS
+Start_final.txt	Startsignal-Datei mit GATE:START_ID	Wichtig für Hash-Verbindung (session)
+RAM_PROOF.json	Sitzungsnachweis mit zufälligem Schlüssel	Notwendig für HMAC
+signing_key.json	Ed25519-Schlüssel (privat/öffentlich)	Nur zur Signatur notwendig
+HS_Final.signature.json	Öffentliche Signaturdatei	Verifizierbar über verify_signature.py
+HS_Final.txt (versteckt signiert)	Optional: mit unsichtbarem Block	via signiere_hs_hidden.py
+🧠 2. Nebendateien & Funktionen
+Datei	Aufgabe
+generate_ram_proof.py	Erstellt neuen RAM_PROOF.json für jede Session
+derive_keys_v1.py	Optional: Schlüsselableitung für spezifische Nutzer
+embed_starter_into_hs_v3.py	Integriert Meta (SHA256 + HMAC + Stylometrie) in HS_Final.txt
+embed_starter_into_koda_v3.py	Dasselbe für KonDa
+signiere_hs.py	Signiert HS sichtbar, speichert JSON
+signiere_hs_hidden.py	Signiert HS mit verstecktem Block
+verify_signature.py	Prüft HS_Final.signature.json gegen aktuelle Datei
+verify_hidden_signature.py	Prüft versteckte Signatur
+upload_gatekeeper.py	Führt finale Prüfung durch
+gatekeeper.py	Hauptprüfer für Authentizität & Vollständigkeit
+🔄 3. Ablauf / Pipeline
+📌 Vorbereitung:
+# 1. RAM-Proof erstellen
+python generate_ram_proof.py
+
+# 2. HS vorbereiten & Startdatei kontrollieren (START_ID vorhanden?)
+notepad Start_final.txt
+notepad HS_Final.txt
+
+🧬 HS Final signaturfertig machen:
+# 3. embed starter → stylometrisch + hmac + meta
+python embed_starter_into_hs_v3.py
+
+
+🔁 Skript benennt:
+
+HS_Final.txt → HS_Final_first.txt
+
+HS_Final_embedded_v3.py → HS_Final.txt
+
+🔏 Optional: Signieren
+# 4. Sichtbare Signatur
+python signiere_hs.py
+
+# 5. Oder: Versteckte Signatur
+python signiere_hs_hidden.py
+
+🔍 Validieren (vor Nutzung):
+# 6. Signatur prüfen
+python verify_signature.py
+# oder
+python verify_hidden_signature.py
+
+📊 4. Stylometrische Metriken (in embed_starter_into_hs_v3.py)
+
+Diese werden automatisch extrahiert:
+
+char_count, line_count, paragraphs
+
+Umlaute: ü, ä, ö → Punktesystem
+
+i_points → kulturell-sprachliches Merkmal
+
+whitespace_count, tab_count, zero_width_characters
+
+comment_line_count, long_line_count
+
+uppercase_ratio, punctuation_count
+
+empty_line_count, trailing_space_lines
+
+→ Diese Metriken werden mit sha256 und hmac in ein JSON-Objekt eingebettet.
+
+🧙‍♂️ 5. Unsichtbare Metadaten-Integration
+
+Im letzten Schritt wird folgendes erzeugt:
+
+# Zero-width block:
+zw_block = encode_zero_width(json.dumps(build_meta, separators=(',', ':')))
+result = content.strip() + "\n\n# Elaris: HS build-meta\n#" + zw_block
+
+
+Der Block ist nicht sichtbar.
+
+Enthält Hash, HMAC, stylometrische Metriken
+
+Kann nur mit Tools gelesen und validiert werden
+
+📌 6. Schutz-Logik: Warum ist das sicher?
+Schutzmechanismus	Beschreibung
+🔐 SHA256	Unveränderbare Inhaltsprüfung
+🧪 Stylometrie	Erkennung von Bearbeitungen durch Schreibstil
+🧾 RAM_PROOF + HMAC	Verknüpft Datei mit einer spezifischen Session
+🕵️‍♂️ Zero-width Block	Unsichtbar für visuelle Leser, Tool-gestützt validierbar
+✍ Digitale Signatur	Ed25519 schützt vor Modifikation
+⛓ Replay-Schutz (optional)	Durch Merkle-Verkettung oder Start-ID chaining (z. B. nonce) realisierbar
+🚧 7. Noch offen (optional für 5++)
+
+⛓ Merkle-Log / Nonce-Kette
+
+🕒 Trusted Timestamp (TSA)
+
+🔑 Key-Verwaltung mit Transparency-Log
+
+🔁 Gatekeeper-Historie mit Hash-Linking
+
+💼 Compliance-Modul für auditsichere Prüfung
+
+✅ Aktueller Status
+Element	Status
+Stylometrie eingebaut	✔️
+HMAC gesichert	✔️
+RAM_PROOF aktiv	✔️
+Unsichtbarer Metablock	✔️
+Backup-Rotation (first)	✔️
+Digitale Signatur (optional)	✔️
+Validierungstools	✔️
+Automatische Tools / Skripte	✔️
+Dokumentation (Handbuch)	✔️
+PowerShell-Automatisierung	✔️

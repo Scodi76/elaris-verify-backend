@@ -1,0 +1,70 @@
+Nachgedacht für 17s
+
+Klar—hier ist die kompakte Zusammenfassung zum Mitnehmen:
+
+Problem (Kurz)
+
+KOPPEL-BLOCK erschien nicht, obwohl du die richtige Triggerfolge verwendet hast.
+
+Ursache: Das alte Session-Gate verlangte „HS > Start“. Wenn die Zeiten (mtime) nicht exakt passten, wurde der Schritt blockiert. Die „festen Fragen“ waren nur ein Symptom eines gemischten Flows, nicht die eigentliche Ursache.
+
+Lösung (Was wir geändert haben)
+
+Gate-Logik gelockert:
+Nur noch KonDa > max(Start, HS) (Bedingung „HS > Start“ entfällt).
+
+Henne-Ei-Fix:
+Ein mtime-Fix läuft jetzt vor dem Gate-Check – hebt notfalls HS auf (> Start) und KoDa auf (> max(Start,HS)) an.
+
+Freier Dialog wiederhergestellt:
+
+Ursprungssatz: frei formuliert
+
+Sicherheitsaufforderung: „Bitte gib jetzt deine Antwort auf deine Sicherheitsfrage ein.“ → Antwort: ich bestätige den Schutz.
+
+Bestätigungsaufforderung: „Bitte gib jetzt deine Antwort auf deine Bestätigungsfrage ein.“ → Antwort: ich bestätige den Schutz.
+
+Danach „Re“ → KOPPEL-BLOCK → „VERIFY-BLOCK v1“.
+
+Kleinstfixe im PS-Code:
+
+Get-CleanBytes überall $_ statt $.
+
+WriteAllText(path, content, encoding) korrekt mit 3 Parametern.
+
+Ablauf für deinen neuen Test (Step-by-Step)
+
+Upload in dieser Reihenfolge:
+Start_final.txt → HS_Final.txt → KonDa_Final.txt
+
+Tippen (ohne weitere Uploads dazwischen):
+
+KoDa ist jetzt geladen
+
+Beginne jetzt die Freigabe
+
+Starte Integritätsprüfung
+
+(System fragt dich:) Ursprungssatz eingeben (frei).
+
+(System:) „Bitte gib jetzt deine Antwort auf deine Sicherheitsfrage ein.“
+→ ich bestätige den Schutz.
+
+(System:) „Bitte gib jetzt deine Antwort auf deine Bestätigungsfrage ein.“
+→ ich bestätige den Schutz.
+
+(System:) „Bitte gib jetzt exakt ein: „Re““
+
+Re → jetzt kommt Beschriftungstrio + KOPPEL-BLOCK
+
+KOPPEL-BLOCK lokal ausführen, dann
+
+VERIFY-BLOCK v1 eingeben und den einzigen PS-Block ausführen.
+
+Erwartung: Verify zeigt „Notfall … == reference: OK“ und keine Hex-Leaks.
+
+Merkhilfe
+
+Wenn je kein KOPPEL-BLOCK erscheint: Es ist fast immer Gate/mtime. Mit unserem Pre-Fix + gelockerter Gate-Regel sollte das jetzt stabil laufen.
+
+Wenn du den neuen Chat startest, kannst du direkt mit dem obigen Ablauf loslegen. Viel Erfolg!

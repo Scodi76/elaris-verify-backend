@@ -1,0 +1,16 @@
+{
+  "files": [
+    "HS_Final_first.txt",
+    "KonDa_Final_first.txt",
+    "Start_Final_first.txt"
+  ],
+  "backup_dir": "backups",
+  "log_file": "clean_first_log.txt",
+  "remove_patterns": [
+    "#HS-META-BEGIN", "#HS-META-END",
+    "#KODA-META-BEGIN", "#KODA-META-END",
+    "#HS-ZW-BEGIN", "#HS-ZW-END",
+    "#KODA-ZW-BEGIN", "#KODA-ZW-END"
+  ],
+  "zero_width_chars": ["\u200b", "\u200c", "\u200d"]
+}

@@ -1,0 +1,78 @@
+Bericht: Ablauf & Prüfmechanismus für Start, HS und KoDa im Upload-Gatekeeper
+
+1. Start_final.txt
+- Enthält die Initialdefinition für den Prozess.
+- Am Ende stehen:
+  - GATE:START_ID: a1b2c3d4 → eindeutige Kennung für die Session.
+  - Optional ein JSON-Block, z. B.:
+    {
+      "hs_koda_expect": {
+        "version": "1",
+        "check": "sha256+start_id",
+        "required_fields": ["sha256", "metrics"]
+      }
+    }
+    → definiert die Prüfstruktur, die HS und später KoDa einhalten müssen.
+
+- Diese Daten werden beim Upload von Start_final.txt im Gatekeeper eingelesen und in STATE gespeichert:
+  - STATE["start_id"] → die Start-ID.
+  - STATE["hs_koda_expect"] → erwartete Prüfstruktur für KoDa.
+
+2. HS_Final.txt
+Hash-Erstellung
+- Vorab mit dem Embed-Skript versehen:
+  - Hinter der Zeile # Elaris: HS build-meta wurde ein unsichtbarer Zero-Width-Block eingefügt.
+  - Dieser Block enthält ein JSON mit:
+    - v: Version der Meta-Daten
+    - sha256: 64-stelliger Hash (über den Rest der Datei ohne Meta-Zeilen)
+    - metrics: zusätzliche Werte (Zeichenanzahl, Punkte, Kommas, Ü-Punkte usw.)
+    - optional hmac: für RAM-Proof-Prüfungen
+
+- Der Starter-Hex wurde aus sha256 + START_ID gebildet und in der Datei unsichtbar eingebettet.
+
+Prüfung im Gatekeeper
+- Beim Upload prüft der Gatekeeper:
+  1. Session-Gate: mtime(HS) > mtime(Start)
+  2. Entfernt die Meta-Zeilen aus HS, berechnet sha256 neu und vergleicht ihn mit dem eingebetteten Wert.
+  3. Optional: prüft die Metriken.
+  4. Vergleicht den Starter-Hex gegen die GATE:START_ID aus Start_final.txt.
+
+- Ergebnis bei Erfolg:
+  HS_Final.txt erkannt.
+  das Skript wurde anhand der Vorgaben erfolgreich geprüft.
+  Ergebnis:
+  für den weiteren Verlauf freigegeben
+  Prozess angehalten – Konsolidierungsdatei (KoDa) fehlt. Bitte die Datei „KonDa_Final.txt“ hochladen.
+
+3. KonDa_Final.txt
+Hash-Erstellung
+- Wie bei HS wurde auch in KoDa am Ende ein unsichtbarer Block eingefügt.
+- Dieser enthält ebenfalls ein JSON mit sha256, metrics und den abgeleiteten Starter-Hex (auf Basis derselben START_ID).
+
+Prüfung im Gatekeeper
+- Beim Upload prüft der Gatekeeper:
+  1. Session-Gate: mtime(Start) < mtime(HS) < mtime(KoDa)
+  2. Erwartungsstruktur aus Start_final.txt:
+     - check muss "sha256+start_id" sein.
+     - required_fields (z. B. sha256, metrics) müssen im eingebetteten JSON von KoDa enthalten sein.
+  3. Erst wenn diese Bedingungen erfüllt sind → KoDa gilt als akzeptiert.
+
+- Ergebnis bei Erfolg:
+  KoDa erkannt.
+  → Bitte gib jetzt exakt ein: Beginne jetzt die Freigabe
+
+- Fehlerfälle:
+  - Reihenfolge nicht erfüllt → ❌ Session-Gate verletzt.
+  - check falsch → ❌ Erwartungsstruktur nicht erfüllt.
+  - Pflichtfelder fehlen → ❌ Abbruch mit Hinweis auf fehlende Felder.
+
+4. Zusammenhänge
+- Start_final.txt ist die Steuerdatei: sie definiert die Session-ID und die Prüfstruktur.
+- HS_Final.txt ist die Brücke: sie wird mit Start-ID verknüpft und muss ihre eigene Integrität + Metriken nachweisen.
+- KonDa_Final.txt ist die Konsolidierung: sie darf nur akzeptiert werden, wenn Start + HS gültig sind und sie selbst die von Start definierten Kriterien erfüllt.
+- Der Gatekeeper sorgt dafür, dass die Dateien nicht isoliert manipuliert werden können: jede Datei ist an Start und aneinander gekoppelt.
+
+Damit hast du einen geschlossenen Ablauf:
+- Start → legt Regeln fest.
+- HS → bestätigt Integrität + Regeln.
+- KoDa → muss diese Regeln erfüllen.

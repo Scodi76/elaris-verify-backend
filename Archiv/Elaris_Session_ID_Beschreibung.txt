@@ -1,0 +1,99 @@
+
+Elaris Gatekeeper – Beschreibung der Session-ID
+==============================================
+
+Stand: 2025-10-06 09:24:06
+Sicherheitsstufe: 5 – Sitzungsidentifikation und Integritätsverknüpfung
+
+-------------------------------------------------------------
+1️⃣ Zweck der Session-ID
+-------------------------------------------------------------
+Die Session-ID identifiziert jede aktive Elaris-Prüf- oder Aktivierungssitzung eindeutig.
+Sie verbindet alle Prüfkomponenten (Handshake, Integrität, Laufzeitaudit, RAM-Proof)
+innerhalb einer Sitzung miteinander und stellt sicher, dass die Zuordnung unverfälscht bleibt.
+
+-------------------------------------------------------------
+2️⃣ Wann und wo die Session-ID erzeugt wird
+-------------------------------------------------------------
+• handshake_v4.py – beim Start einer neuen Vertrauenskette oder nach Reset
+• freigabe_gate_v1.py – liest oder erzeugt neue ID bei Integritätsprüfung
+• generate_ram_proof.py – bindet ID in RAM Proof ein
+• app_verify_backend_v5_9.py – überträgt ID ins Backend-Log
+• audit_trail.json – speichert ID zur Nachverfolgung
+
+-------------------------------------------------------------
+3️⃣ Technische Erzeugung der Session-ID
+-------------------------------------------------------------
+Beispielhafte Implementierung:
+
+import uuid, datetime
+
+def generate_session_id():
+    prefix = "ELARIS-SESSION-"
+    unique_id = str(uuid.uuid4())[:8].upper()
+    timestamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M")
+    session_id = prefix + unique_id + "-" + timestamp
+    return session_id
+
+Ergebnis:
+ELARIS-SESSION-9AF7D-202510062132
+
+-------------------------------------------------------------
+4️⃣ Nutzung der Session-ID
+-------------------------------------------------------------
+• handshake_report.json – verknüpft lokalen und Backend-Hash
+• RAM_PROOF.json – bindet Proof an Sitzung
+• audit_trail.json – dokumentiert Start- und Endzeit
+• Elaris_Verify_Log_*.json – archiviert Prüfstatus
+• elaris_verify_backend – erkennt laufende Sitzung
+
+Beispiel in RAM_PROOF.json:
+{
+  "session_id": "ELARIS-SESSION-9AF7D-202510062132",
+  "verified_modules": ["HS_Final_embedded_v3.py", "KonDa_Final_embedded_v3.py"],
+  "runtime_check_passed": true
+}
+
+-------------------------------------------------------------
+5️⃣ Wann eine neue Session-ID erzeugt wird
+-------------------------------------------------------------
+• Erster Start – keine aktive ID vorhanden
+• Nach Reset – alte ID gelöscht
+• Nach Handshake-Neustart – neue ID erzwungen
+• Abbruch oder Neuprüfung – neue ID bei erneutem Audit
+• Während aktivem Betrieb – bestehende ID bleibt gültig
+
+-------------------------------------------------------------
+6️⃣ Speicherung und Weitergabe
+-------------------------------------------------------------
+Die Session-ID wird nach ihrer Erzeugung an folgende Komponenten weitergegeben:
+1. handshake_report.json
+2. RAM_PROOF.json
+3. audit_trail.json
+4. Backend (app_verify_backend_v5_9.py)
+5. Elaris_Verify_Log_YYYY-MM-DD.json
+
+-------------------------------------------------------------
+7️⃣ Beispiel eines vollständigen Sitzungsdatensatzes
+-------------------------------------------------------------
+{
+  "session_id": "ELARIS-SESSION-7F9D3-202510062115",
+  "handshake_status": "verified",
+  "integrity_verified": true,
+  "ram_proof": "valid",
+  "activated": true,
+  "timestamp_start": "2025-10-06T21:15:00Z",
+  "timestamp_end": "2025-10-06T21:33:00Z"
+}
+
+-------------------------------------------------------------
+8️⃣ Fazit
+-------------------------------------------------------------
+• Die Session-ID ist der eindeutige Anker aller Elaris-Systemprüfungen.
+• Sie wird beim Start, Reset oder Handshake erzeugt.
+• Alle Audit- und Proof-Daten werden an dieselbe Session-ID gebunden.
+• Ihr Fehlen deutet auf eine noch nicht gestartete Sitzung hin.
+
+-------------------------------------------------------------
+Ende der Prozessbeschreibung
+-------------------------------------------------------------

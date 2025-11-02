@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-11-02T07:58:03.246871Z",
+  "results": {
+    "HS_Final.txt": "ok",
+    "KonDa_Final.txt": "ok",
+    "Start_final.txt": "ok",
+    "HS_Final.txt.signature.json": "ok",
+    "KonDa_Final.txt.signature.json": "ok"
+  },
+  "summary": {
+    "fail": 0,
+    "ok": 5
+  }
+}

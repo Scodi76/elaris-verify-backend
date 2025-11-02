@@ -1,0 +1,50 @@
+⚙️ Starter-Prüfung – Ziel und Ablauf
+
+Die Datei Start_final.txt ist die Quelle der Session-ID,
+in der Zeile:
+
+GATE:START_ID: a1b2c3d4
+
+
+Diese ID ist der eindeutige „Startanker“ der gesamten Prüfung.
+Alles, was danach folgt (Hash, HMAC, Meta-Blöcke),
+wird anhand dieser ID validiert.
+
+🧠 Was die Starter-Datei prüft
+
+Wenn du das Skript embed_starter_into_hs_v3.py ausführst,
+passiert Folgendes:
+
+1️⃣ Es liest die Start-ID aus Start_final.txt
+2️⃣ Es liest den kompletten Text der HS_Final.txt
+3️⃣ Es erzeugt daraus eine SHA256-Signatur
+4️⃣ Diese Signatur wird mit der Start-ID kombiniert
+5️⃣ Dann wird daraus ein zweiter Hash gebildet
+6️⃣ Dieser zweite Hash wird verschlüsselt (Fernet)
+7️⃣ Anschließend wird daraus ein HMAC gebildet,
+das mit dem RAM_PROOF.json-Key verknüpft ist
+8️⃣ All das wird am Ende der HS-Datei als Zero-Width-Block eingebettet
+
+🔍 Bei der Prüfung (späterer Check oder Upload)
+
+Wenn die HS geprüft wird (z. B. beim Upload-Gate oder Koppelblock):
+
+1️⃣ Das System liest HS_Final.txt vollständig ein
+2️⃣ Es sucht nach dem eingebetteten Zero-Width-Block
+3️⃣ Dieser Block enthält die verschlüsselte Signatur und Metrik-Daten
+4️⃣ Anschließend werden folgende Werte neu berechnet:
+
+aktueller SHA256 der HS
+
+aktuelle Start-ID
+
+aktuelle Stylometrik (z. B. Zeilen, Zeichen, Umlaute usw.)
+5️⃣ Dann werden diese mit den im Zero-Block gespeicherten Werten verglichen
+
+💡 Was genau geprüft wird:
+Kategorie	Beschreibung	Ziel
+🔹 Hash-Prüfung	SHA256 der Datei	Wurde die Datei verändert?
+🔹 Start-ID	Vergleich mit Start_final.txt	Gehört HS zu dieser Start-Session?
+🔹 HMAC	Vergleich mit RAM_PROOF	Ist die Datei echt, nicht gefälscht?
+🔹 Stylometrik	Zeichen, Zeilen, Umlaute	Manipulationen auf Textebene erkannt?
+🔹 Zero-Width-Block	Unsichtbare Codierung	Integrität des Metablocks selbst

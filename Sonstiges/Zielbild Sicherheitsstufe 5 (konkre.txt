@@ -1,0 +1,205 @@
+Zielbild Sicherheitsstufe 5 (konkret)
+
+MUSS
+
+Signaturen für HS_Final.txt & KonDa_Final.txt (z. B. ECDSA P-256 oder Ed25519) – offline erstellt, online verifiziert.
+
+Authentifizierte Payloads: OUT-Dateien (hidden injects) mit HMAC-SHA-256 (oder AEAD) abgesichert.
+
+Hardware-Binding: Schlüsselmaterial/Artefakte per TPM/DPAPI/KMS geschützt.
+
+Replay/Downgrade-Schutz: Monotoner Zähler + Merkle-Root über jede Session/Generation.
+
+Vertrauenswürdige Zeit: RFC 3161-TSA / Attest-Zeit oder mindestens signierte Witness-Zeit.
+
+Transparenz-Beweis: Append-only Audit (lokal) + optional externer Anker (Repo/Transparency-Service).
+
+SOLL
+7) RAM-Hash als ephemerer Session-Faktor, in alle Ableitungen integriert (HMAC-Key-Derivation, Gate-Token, Nonces).
+8) Strikte Kanonisierung (hast du schon: Get-CleanBytes) – bleibt Pflicht.
+
+Patch A — Dateisignaturen (HS & KoDa)
+
+Was: Signiere offline beide Dateien (HS, KoDa). Lege je eine .sig daneben. Im Chat/KOPPEL-Flow vor allem anderen: Signaturen verifizieren – sonst Abbruch.
+
+Mini-Snippet (PowerShell 7+, .NET ≥5, ECDSA P-256 als Beispiel):
+
+# Verify-HS.ps1 (analog für KoDa)
+$pubPem = Get-Content 'pubkey_ecdsa_p256.pem' -Raw
+$bytes  = [IO.File]::ReadAllBytes('HS_Final.txt')
+$sig    = [Convert]::FromBase64String((Get-Content 'HS_Final.txt.sig' -Raw))
+$ecdsa  = [System.Security.Cryptography.ECDsa]::Create()
+$ecdsa.ImportFromPem($pubPem)
+
+if(-not $ecdsa.VerifyData($bytes,
+    $sig,
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256)) {
+  throw "Signature invalid for HS_Final.txt"
+}
+"HS signature OK"
+
+
+Falls du auf Windows PowerShell 5.1 bist, nimm PowerShell 7 für die Verifikation (wegen ImportFromPem).
+
+Integration:
+– Prüfschritt vor HS-PASS/KoDa-Erkennung. Ohne gültige Signatur → FAIL.
+
+Patch B — Authentifizierte OUT-Payloads (HMAC)
+
+Was: Deine OUT-Dateien tragen Zero-Width-JSON. Füge ein Feld mac hinzu (HMAC-SHA-256 über "which|hex"). HMAC-Key leitest du deterministisch ab (kein neues Geheimnis nötig).
+
+Ableitungsvorschlag (robust, kein Leak):
+
+k_hmac = SHA256( bytes( starter_hex + "|INJECT-HMAC-1" ) )
+mac    = HMAC_SHA256( key=k_hmac, msg = which + "|" + hex )
+
+
+Änderung in Write-KeyOut (Pseudocode – du hast bereits SHA256Hex, Derive-KeyHex, HexToBytes):
+
+function Compute-HmacHex([string]$starter_hex,[string]$which,[string]$hex){
+  $k = [System.Text.Encoding]::UTF8.GetBytes($starter_hex + '|INJECT-HMAC-1')
+  $h = New-Object System.Security.Cryptography.HMACSHA256($k)
+  $mac = $h.ComputeHash([Text.Encoding]::UTF8.GetBytes("$which|$hex"))
+  ($mac | ForEach-Object { $_.ToString('x2') }) -join ''
+}
+
+function Write-KeyOut([string]$path,[string]$which,[string]$hex,[string]$starter_hex){
+  $mac  = Compute-HmacHex $starter_hex $which $hex
+  $obj = [PSCustomObject]@{
+    type   = 'key-inject'
+    which  = $which
+    hex    = $hex
+    mac    = $mac
+    at_utc = (Get-Date).ToUniversalTime().ToString('o')
+  }
+  $json = $obj | ConvertTo-Json -Compress
+  $zw   = ZW-Encode $json
+  $content = "# Elaris: KEY-INJECT (hidden)`r`n# $zw"
+  [System.IO.File]::WriteAllText($path, $content, $Utf8NoBom)
+}
+
+
+→ Aufruf ändern: Write-KeyOut $HS_OUT 'haupt' $haupt_hex $starter_hex (und analog für gegen).
+
+VERIFY-Block anpassen:
+– Zero-Width decodieren → hex, which, mac einlesen.
+– HMAC neu berechnen und vergleichen.
+– Erst danach Notfall-Check. (Du änderst nur wenige Zeilen im Verify-Script.)
+
+Patch C — Hardware-Binding (DPAPI/TPM)
+
+Schnell & wirksam (Windows, ohne TPM-APIs): DPAPI zum Schutz von keys_out_chat.json (lokal nutzbar, pro Benutzer/Computer gebunden):
+
+Add-Type -AssemblyName System.Security
+function Protect-Bytes([byte[]]$plain){
+  [System.Security.Cryptography.ProtectedData]::Protect(
+    $plain, $null,
+    [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+}
+function Unprotect-Bytes([byte[]]$cipher){
+  [System.Security.Cryptography.ProtectedData]::Unprotect(
+    $cipher, $null,
+    [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+}
+
+# beim Schreiben:
+$raw = [Text.Encoding]::UTF8.GetBytes($keysObj | ConvertTo-Json -Compress)
+$enc = Protect-Bytes $raw
+[IO.File]::WriteAllBytes($KEYS, $enc)
+
+# beim Lesen (Verify):
+$enc = [IO.File]::ReadAllBytes($KEYS)
+$raw = Unprotect-Bytes $enc
+$keysObj = [Text.Encoding]::UTF8.GetString($raw) | ConvertFrom-Json
+
+
+High-End: TPM 2.0 „sealed” secrets (PCR-gebunden) oder KMS/HSM. Das Prinzip bleibt: ohne die Maschine/Attestation → keine Nutzbarkeit der Artefakte.
+
+Patch D — Replay/Downgrade-Schutz (Monoton + Merkle)
+
+Was: Jede erfolgreiche „Starte Integritätsprüfung“ erzeugt:
+
+epoch = vorherige epoch + 1 (in KoDa persistiert)
+
+root = SHA256( epoch || hs_sha || koda_sha || starter_hex || vorheriger_root )
+
+Minimal-Implementierung (PowerShell-Pseudo):
+
+$statePath = Join-Path $W 'integrity_state.json'
+if(Test-Path $statePath){ $st = Get-Content -Raw $statePath | ConvertFrom-Json } else {
+  $st = [pscustomobject]@{ epoch=0; root='' }
+}
+$epoch = [int]$st.epoch + 1
+
+function SHA256OfString($s){
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($s)) |
+    ForEach-Object { $_.ToString('x2') }) -join ''
+}
+$concat = "$epoch|$hs_sha|$koda_sha|$starter_hex|$($st.root)"
+$root   = SHA256OfString $concat
+
+$st = [pscustomobject]@{ epoch=$epoch; root=$root; at_utc=(Get-Date).ToUniversalTime().ToString('o') }
+$st | ConvertTo-Json | Set-Content -Path $statePath -Encoding UTF8
+
+
+Policy: Bei Start verlange: epoch_neu == epoch_alt + 1 und verbiete jede KoDa/HS-Kombi, die einen kleineren Root-Pfad ergäbe → Downgrade blockiert.
+
+Patch E — Vertrauenswürdige Zeit
+
+Best-Practice: Hole eine signierte Zeit (RFC 3161 TSA) und speichere das TST neben integrity_state.json.
+Minimal: Zwei unabhängige NTP-Quellen + Witness-Signatur (zweiter Schlüssel signiert „epoch|root|utc“) → im Verify anzeigen.
+
+Patch F — RAM-basierter Hash (Antwort auf deine Frage)
+
+Was ist er gut?
+Ein ephemerer Bindungsfaktor/Session-Schlüssel:
+
+ram_hash = SHA256( device_attest || process_nonce || pid || start_ticks || user_sid )
+
+
+Nutzung:
+
+In KDF für k_session → fließt in k_hmac ein (siehe Patch B).
+
+Als Gate-Token: gate = SHA256(starter_hex | ram_hash | "GATE-1"), serverseitig erwartet.
+
+Nicht persistieren; nur RAM.
+
+Sicherheitsgewinn: Bindet die Freigabe an genau diese Laufzeit & Maschine.
+
+Wichtig: Ohne Hardware/Attestation wäre ram_hash allein schwach (simulierbar). Mit DPAPI/TPM + Signatur-Pflicht wird er wertvoll.
+
+Mini-Snippet (Windows, pragmatisch):
+
+$user  = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$pid   = $PID
+$ticks = [DateTime]::UtcNow.Ticks
+$nonce = [Guid]::NewGuid().ToString()
+
+function SHA256OfString($s){
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($s)) |
+    ForEach-Object { $_.ToString('x2') }) -join ''
+}
+$ram_hash = SHA256OfString("$user|$pid|$ticks|$nonce")
+
+
+→ Dann: k_session = SHA256( starter_hex + "|" + $ram_hash )
+→ und k_hmac = SHA256( k_session + "|INJECT-HMAC-1" )
+
+Reihenfolge (kompakt)
+
+Verify Signaturen (HS, KoDa) → sonst FAIL.
+
+PRE-mtime-Fix (wie von dir geplant) → Gate: KoDa > max(Start,HS).
+
+Dialog: Ursprungssatz → „Sicherheits-Antwort“ → „Bestätigungs-Antwort“ (je „ich bestätige den Schutz.“) → „Re“.
+
+KOPPEL-BLOCK: Berechnung + HMAC-geschützte OUTs + DPAPI-geschütztes keys_out_chat.json + epoch/root updaten + optional TSA/Witness.
+
+VERIFY-BLOCK: (a) HMAC prüfen (b) Notfall neu berechnen (c) epoch/root prüfen (d) Zeit/Witness prüfen.
+
+Transparenz-Log fortschreiben.
+
+Wenn du willst, schreibe ich dir konkrete Diff-Blöcke (fertige Funktionen + Verify-Anpassungen) exakt passend zu deiner aktuellen HS-Version – dann kannst du sie direkt einsetze

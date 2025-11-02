@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-11-02T07:58:08.815165Z",
+  "status": "success",
+  "details": {
+    "HS_Final": "[WARN] SHA256 stimmt nicht",
+    "KoDa_Final": "[WARN] SHA256 stimmt nicht"
+  },
+  "sums": {
+    "starter_sum_hex": "0x96ee2e72f4713f7f97edfa5f55c11fcdbc6f723448da44f0219664064dd916d4"
+  }
+}

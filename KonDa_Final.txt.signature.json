@@ -1,0 +1,8 @@
+{
+  "file": "KonDa_Final.txt",
+  "signature": "33488a75cdb7876b61f47ca70f7195af62c8d11a1fe101c65dd712d74780253b",
+  "hash_algorithm": "SHA256",
+  "method": "HMAC",
+  "key_type": "sha256-hex",
+  "created_at": "2025-11-02T07:57:52.569671Z"
+}

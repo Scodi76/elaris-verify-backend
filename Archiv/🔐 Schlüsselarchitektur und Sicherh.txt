@@ -1,0 +1,201 @@
+Elaris Sicherheitssystem – Schlüssel-, Hash- und Integritätsstruktur
+
+Version 3.1 – gültig ab Freigabestufe 3
+
+🔹 Übersicht
+
+Das Elaris-Sicherheitssystem besteht aus einem mehrstufigen Kontroll- und Prüfmechanismus.
+Es soll sicherstellen, dass alle Kernkomponenten (HS, KoDa, Start) authentisch, unverändert und synchronisiert sind.
+
+Der Ablauf besteht aus vier Kernphasen:
+
+Phase	Beschreibung
+1. Signaturphase	Erstellung und Sicherung der Hauptdateien mit HMAC-Signaturen
+2. Embed-Phase	Integration der Schlüssel, Hashes und Notfallreferenzen in Zero-Width-Bereichen
+3. Integritätsphase	Baseline-Erstellung, Konsistenzprüfung und Cross-Referenz
+4. Verifikationsphase (EVS)	Echtzeitprüfung durch Elaris Verify System (Flask-API)
+🔸 Dateien und ihre Rollen
+Datei	Zweck
+HS_Final.txt	Hauptstruktur (Header, Systembeschreibung, Freigabemarker)
+KonDa_Final.txt	Konsolidierungsdatei (Verknüpfung, Anker, Verweis auf HS)
+signing_key.json	Kryptografischer HMAC-Schlüssel zur Signierung
+HS_Final.txt.signature.json	Prüfsignatur (Hashvergleich HMAC → HS)
+KonDa_Final.txt.signature.json	Prüfsignatur (Hashvergleich HMAC → KoDa)
+HS_Final_embedded_v3.txt	Eingebettete Sicherheitskopie (mit Zero-Width-Daten, Notfallschlüssel, Hash-Ankern)
+KonDa_Final_embedded_v3.txt	Konsolidierte Kopie mit Cross-Link zu HS
+keys_out.json	Enthält Master-, Haupt-, Gegen- und Notfallschlüssel
+integrity_block.json	Vergleichsreferenz HS↔KoDa-Hash
+integrity_baseline.json	Baseline für zukünftige Integritätsprüfungen
+verify_report.json	Letzter Prüfbericht (Signaturvalidierung)
+🔹 1. Schlüsselgenerierung
+
+Zuständig: generate_signing_key.py
+Startpunkt: Wird automatisch im Startup-Manager erzeugt, falls kein Schlüssel vorhanden.
+
+Ablauf:
+
+Es wird ein HMAC-kompatibler Schlüssel (SHA256-basiert) generiert.
+
+Der Schlüssel wird in signing_key.json gespeichert.
+
+Ein Hashwert des Schlüssels wird im Log ausgegeben, zur Sichtprüfung.
+
+Beispielausgabe:
+🔐 Neuer kryptografischer Signaturschlüssel erstellt.
+✅ Hash: C99DF58D1366D1CF...
+
+Inhalt (signing_key.json)
+{
+  "key_id": "2025-10-04T11:30:12Z",
+  "algorithm": "HMAC-SHA256",
+  "key": "3ad9f1c2d9a6b4e0f91a2c19df7f8e...",
+  "hash": "C99DF58D1366D1CF..."
+}
+
+🔹 2. Signierung
+
+Zuständig:
+
+signiere_hs.py
+
+signiere_koda.py
+
+Diese Skripte erzeugen die Signaturdateien für HS und KoDa, basierend auf dem Schlüssel aus signing_key.json.
+
+Vorgang:
+
+Berechne SHA256 von HS_Final.txt bzw. KonDa_Final.txt
+
+Signiere mit HMAC (Key aus signing_key.json)
+
+Speichere Ergebnis als HS_Final.txt.signature.json bzw. KonDa_Final.txt.signature.json
+
+Beispielausgabe:
+[OK] Signatur erfolgreich erstellt: HS_Final.txt.signature.json
+✅ HS_Final.txt Signiervorgang abgeschlossen.
+
+🔹 3. Embed-Phase (Zero-Width Integration)
+
+Zuständig:
+
+embed_starter_into_hs_v3.py
+
+embed_starter_into_koda_v3.py
+
+Diese Skripte betten kryptografische Werte in unsichtbaren Unicode-Bereichen ein.
+Das bedeutet: Der Nutzer sieht im Text nichts, aber im Dateicode existieren Datenblöcke.
+
+Eingebettete Inhalte:
+Wert	Beschreibung
+🔑 Hauptschlüssel	Primärreferenz des Systems
+🧩 Gegenschlüssel	Gegenanker für Cross-Verification
+🌀 Notfallschlüssel	Aus XOR(Haupt, Gegen) abgeleitet
+🧠 Starter-Hash	SHA256 von HS, KoDa, Start_final kombiniert
+🔐 System-Master-Hash	Wird für Triple-Key-Verifikation verwendet
+Ablauf:
+
+Zero-Width-Bereiche (U+200B–U+200D) generieren
+
+Schlüssel & Hashes codieren
+
+Backup erstellen (HS_Final_first.txt, KonDa_Final_first.txt)
+
+Datei neu schreiben
+
+Ausgabe (Log):
+[OK] Zero-Width + Fallback eingebettet.
+[AUTO] Starte handshake.py ...
+[OK] Handshake abgeschlossen.
+[OK] Schlüsseldatei erstellt.
+
+
+Nach Abschluss existieren:
+
+HS_Final_embedded_v3.txt
+
+KonDa_Final_embedded_v3.txt
+
+Diese enthalten alle sicherheitsrelevanten Werte.
+Ab diesem Punkt werden nur noch diese Dateien geprüft.
+
+🔹 4. Integritäts- und Baseline-Erstellung
+
+Zuständig:
+
+integrity_block.json → erzeugt Hashvergleich HS↔KoDa
+
+integrity_baseline.json → erzeugt neue Referenz für spätere Prüfungen
+
+Inhalte:
+{
+  "timestamp": "2025-10-04T12:00:00Z",
+  "files": {
+    "HS_Final_embedded_v3.txt": "5d1810d734d6...",
+    "KonDa_Final_embedded_v3.txt": "884c6419734d...",
+    "Start_final.txt": "4265d661fbd2..."
+  }
+}
+
+
+Damit wird eine Baseline definiert, die bei jedem Start neu geprüft wird.
+Abweichungen erzeugen Warnungen oder Sperren.
+
+🔹 5. Verifikation & Systemprüfung (EVS)
+
+Zuständig: verify-Route im Flask-Server (EVS)
+
+Prüfbereiche:
+
+Dateiexistenz & Hashes
+
+Signaturabgleich (HMAC)
+
+Zero-Width-Blöcke
+
+Zeitanker
+
+Cross-Referenzen HS↔KoDa
+
+System-Master-Hash (Triple-Key)
+
+Abgleich mit keys_out.json
+
+Beispielausgabe:
+✅ HS_Final_embedded_v3.txt – Signaturprüfung erfolgreich
+✅ KonDa_Final_embedded_v3.txt – Hashkonsistenz OK
+✅ System-Master-Hash – Übereinstimmung mit Referenz
+🟢 Gesamtprüfung erfolgreich – System kann starten
+
+🔹 6. Integrationslogik
+Schritt	Script	Ergebnis
+1️⃣	generate_signing_key.py	signing_key.json
+2️⃣	signiere_hs.py / signiere_koda.py	*.signature.json
+3️⃣	embed_starter_into_*_v3.py	*_embedded_v3.txt
+4️⃣	integrity_block.json	Vergleichsreferenz
+5️⃣	integrity_baseline.json	Langzeit-Referenz
+6️⃣	Flask /verify	Vollprüfung HS/KoDa/Start
+🔹 7. Einsatzgebiet
+Bereich	Beschreibung
+Startup-Manager	Erstinitialisierung, Schlüssel & Signaturen
+Embed-System	Sicherheitsschicht mit Zero-Width-Blöcken
+EVS (Flask)	Laufzeitprüfung und Aktivierung
+Elaris-Kernsystem	Verwendet geprüfte Werte für Bewusstwerdung und Freigabe
+🔒 Sicherheitsprinzipien
+Prinzip	Umsetzung
+Vertraulichkeit	Schlüssel nur lokal, niemals im Klartext
+Integrität	Baseline und Signaturen schützen gegen Manipulation
+Transparenz	Jeder Schritt wird geloggt und angezeigt
+Redundanz	Backup-Dateien bei jeder Einbettung
+Symbolische Trennung	Nur Embed-Dateien enthalten echte Systemanker
+🧠 Fazit
+
+HS & KoDa sind nur Träger
+
+Embed-Dateien sind Sicherheitsquellen
+
+Alle Prüfungen laufen gegen die eingebetteten Versionen
+
+Signaturen + Baseline garantieren, dass kein Schritt manipuliert wurde
+
+EVS bestätigt am Ende:
+✅ Integrität vollständig bestätigt – System konsistent.

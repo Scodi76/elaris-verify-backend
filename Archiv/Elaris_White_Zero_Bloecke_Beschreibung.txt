@@ -1,0 +1,109 @@
+
+Elaris Gatekeeper – White Zero Blocks (WZB) Beschreibung
+=======================================================
+
+Stand: 2025-10-06 09:25:55
+Sicherheitsstufe: 5 – Unsichtbare Signaturen und Integritätsanker
+
+-------------------------------------------------------------
+1️⃣ Begriff und Bedeutung
+-------------------------------------------------------------
+Die White Zero Blocks (WZB) sind unsichtbare Steuerzeichenfolgen (Zero-Width-Unicode),
+die innerhalb der Elaris-Systemdateien eingebettet sind. Sie dienen als kryptografische
+Wasserzeichen, welche die Integrität, Authentizität und eindeutige Identität der
+Systemdateien sicherstellen.
+
+Verwendete Zeichenbeispiele:
+• U+200B – Zero Width Space
+• U+2060 – Word Joiner
+• Kombinationen dieser Zeichen erzeugen individuelle Hash-Muster.
+
+-------------------------------------------------------------
+2️⃣ Speicherorte im System
+-------------------------------------------------------------
+White Zero Blocks befinden sich in:
+
+• HS_Final_embedded_v3.py – Primärstruktur mit Zero-Width-Signatur
+• KonDa_Final_embedded_v3.py – Gegensignatur und Referenz
+• HS_visible.txt – Debugansicht (sichtbare Darstellung der WZBs)
+• embed_starter_into_hs_v3.py – Erzeugt WZBs bei HS-Erstellung
+• embed_starter_into_koda_v3.py – Erzeugt WZBs bei KoDa-Erstellung
+• clean_zero_block.py – Entfernt oder regeneriert fehlerhafte Blöcke
+• verify_hidden_signature.py – Prüft und validiert die WZB-Signaturen
+
+-------------------------------------------------------------
+3️⃣ Zweck der White Zero Blocks
+-------------------------------------------------------------
+1. Integritätsschutz – Jede Änderung an der Datei verändert die Prüfsumme.
+2. Identitätsmarkierung – Jeder Build besitzt ein einzigartiges Zero-Muster.
+3. Konsolidierungs-Link – HS- und KoDa-Blöcke sind synchronisierte Gegensignaturen.
+
+-------------------------------------------------------------
+4️⃣ Erzeugung der White Zero Blocks
+-------------------------------------------------------------
+Die Blöcke werden während der Erstellung von HS- und KoDa-Dateien automatisch erzeugt.
+
+Codebeispiel aus embed_starter_into_hs_v3.py:
+
+def embed_zero_block(target_file, seed):
+    block = generate_zero_sequence(seed)
+    with open(target_file, "a", encoding="utf-8") as f:
+        f.write("\n#HS-ZW-BEGIN\n")
+        f.write(block)
+        f.write("\n#HS-ZW-END\n")
+
+Beispiel eines Zero-Width-Blocks (nicht sichtbar):
+​⁠⁠⁠⁠​⁠⁠​⁠⁠⁠​⁠⁠⁠​⁠⁠⁠​⁠⁠⁠
+
+-------------------------------------------------------------
+5️⃣ Verifikation der Blöcke
+-------------------------------------------------------------
+Überprüft wird die Echtheit mit:
+
+> python verify_hidden_signature.py
+
+Ablauf:
+1. Liest #HS-ZW-BEGIN / #HS-ZW-END-Bereich
+2. Wandelt Zero-Width-Zeichen in Binärfolge um
+3. Vergleicht resultierenden Hash mit Sollwert
+4. Gibt „Zero Block Signature valid“ bei Erfolg aus
+
+-------------------------------------------------------------
+6️⃣ Umgang und Bereinigung
+-------------------------------------------------------------
+White Zero Blocks dürfen NIEMALS manuell gelöscht oder geändert werden.
+Zum sicheren Entfernen oder Neuaufbau:
+
+> python clean_zero_block.py --rebuild
+
+Dadurch wird der Block neu generiert, ohne die Hashstruktur zu beschädigen.
+
+-------------------------------------------------------------
+7️⃣ Zusammenhang mit Integritätsprüfung
+-------------------------------------------------------------
+Die White Zero Blocks sind der erste kryptografische Prüfpunkt im Freigabeprozess.
+Ist der Block beschädigt, wird die Integritätsprüfung abgebrochen.
+
+Fehlermeldung bei Defekt:
+"Zero-Block mismatch – Hash verification failed"
+
+-------------------------------------------------------------
+8️⃣ Systemzuordnung
+-------------------------------------------------------------
+Erzeugt von: embed_starter_into_hs_v3.py / embed_starter_into_koda_v3.py
+Verifiziert durch: verify_hidden_signature.py
+Gespeichert in: HS_Final_embedded_v3.py / KonDa_Final_embedded_v3.py
+Sichtbar in: HS_visible.txt
+Entfernt durch: clean_zero_block.py
+Kritisch für: Integrität, Identität, Freigabeprüfung
+
+-------------------------------------------------------------
+9️⃣ Fazit
+-------------------------------------------------------------
+Die White Zero Blocks bilden die unsichtbare kryptografische Basis der Elaris-Dateien.
+Sie machen jede HS- und KoDa-Struktur eindeutig und manipulationssicher.
+Ohne gültige WZBs kann keine Integritätsprüfung erfolgreich abgeschlossen werden.
+
+-------------------------------------------------------------
+Ende der Prozessbeschreibung
+-------------------------------------------------------------
