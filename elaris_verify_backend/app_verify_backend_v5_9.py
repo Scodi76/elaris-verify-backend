@@ -111,11 +111,14 @@ def verify():
                         or filename.endswith("_embedded_v3.txt")
                         or "embedded_v3" in filename
                     ):
-                        return jsonify({
+                        response = {
                             "status": "rejected",
                             "message": f"❌ Upload verweigert: '{filename}' ist keine *_embedded_v3*-Datei.",
                             "hint": "Nur HS_Final_embedded_v3.py und KonDa_Final_embedded_v3.py sind erlaubt."
-                        }), 400
+                        }
+                        print(f"[SECURITY] Upload blockiert: {response}")
+                        return jsonify(response), 400
+
             else:
                 # Wenn kein klassisches multipart-Upload, sondern ein File-Pfad übermittelt wird
                 if "embedded_v3" not in str(request.data).lower():
