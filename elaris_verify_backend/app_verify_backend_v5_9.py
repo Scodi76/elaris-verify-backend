@@ -130,6 +130,25 @@ def verify():
         except Exception as sec_err:
             print(f"[WARN] Sicherheitsprüfung konnte nicht durchgeführt werden: {sec_err}")
 
+
+        # ==========================================================
+        # 📏 Größenlimit für Uploads (max. 1 MB)
+        # ==========================================================
+        MAX_UPLOAD_SIZE = 1 * 1024 * 1024  # 1 MB
+        if request.files:
+            for f in request.files.values():
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(0)
+                if size > MAX_UPLOAD_SIZE:
+                    return jsonify({
+                        "status": "rejected",
+                        "message": f"❌ Upload verweigert: Datei '{f.filename}' überschreitet das 1 MB-Limit.",
+                        "size_bytes": size,
+                        "hint": "Bitte nur geprüfte *_embedded_v3.py-Dateien unter 1 MB hochladen."
+                    }), 413  # HTTP 413 Payload Too Large
+
+
         
 
         # ==========================================================
