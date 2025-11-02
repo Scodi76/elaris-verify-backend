@@ -99,6 +99,37 @@ def verify():
         summary = []
 
         # ==========================================================
+        # 🚫 Sicherheits-Check: Nur *_embedded_v3* Dateien zulassen
+        # ==========================================================
+        try:
+            # Wenn Upload über Datei-Formular erfolgt
+            if request.files:
+                for f in request.files.values():
+                    filename = f.filename.lower()
+                    if not (
+                        filename.endswith("_embedded_v3.py")
+                        or filename.endswith("_embedded_v3.txt")
+                        or "embedded_v3" in filename
+                    ):
+                        return jsonify({
+                            "status": "rejected",
+                            "message": f"❌ Upload verweigert: '{filename}' ist keine *_embedded_v3*-Datei.",
+                            "hint": "Nur HS_Final_embedded_v3.py und KonDa_Final_embedded_v3.py sind erlaubt."
+                        }), 400
+            else:
+                # Wenn kein klassisches multipart-Upload, sondern ein File-Pfad übermittelt wird
+                if "embedded_v3" not in str(request.data).lower():
+                    return jsonify({
+                        "status": "rejected",
+                        "message": "❌ Upload verweigert: Datei entspricht nicht dem *_embedded_v3*-Format.",
+                        "hint": "Bitte nur geprüfte Embedded-Versionen hochladen."
+                    }), 400
+        except Exception as sec_err:
+            print(f"[WARN] Sicherheitsprüfung konnte nicht durchgeführt werden: {sec_err}")
+
+        
+
+        # ==========================================================
         # 🧠 Adminmodus / Bestätigung
         # ==========================================================
         try:
