@@ -95,6 +95,7 @@ def cleanup_old_variants():
     else:
         print("Keine First/Final-Dateien gefunden – System bereits sauber.")
 
+<<<<<<< HEAD
 
 # ---------- STRIKTER DATEIFILTER ----------
 ALLOWED_EXTENSIONS = {"py"}
@@ -132,6 +133,8 @@ def disable_non_embedded_files(base_dir):
 
 
 
+=======
+>>>>>>> 58022b633e72f7816e731558f3011e3e6251c0c9
 # ---------- PowerShell Blöcke ----------
 KOPPEL_BLOCK = """(dein bestehender PS-Block bleibt hier unverändert)"""
 VERIFY_BLOCK = """(dein bestehender VERIFY-Block bleibt hier unverändert)"""
@@ -188,7 +191,10 @@ def handle_input(user: str):
 
     if u == "Beginne jetzt die Freigabe":
         if STATE["koda_loaded"] and session_gate_for_koda():
+<<<<<<< HEAD
             disable_non_embedded_files(W)
+=======
+>>>>>>> 58022b633e72f7816e731558f3011e3e6251c0c9
             cleanup_old_variants()  # 🧹 automatischer Löschvorgang
             print("Konsolidierungsdatei erkannt. Freigabeprozess wird geladen…")
             print("Bitte gib jetzt den vollständigen Ursprungssatz exakt ein.")
