@@ -13,13 +13,13 @@ ORIGIN_SENTENCE = os.environ.get(
 ).strip()
 
 SECURITY_ANSWER = os.environ.get("ELARIS_SICHERHEIT", "ja").strip()
-CONFIRM_ANSWER  = os.environ.get("ELARIS_BESTAETIGUNG", "ja").strip()
+CONFIRM_ANSWER = os.environ.get("ELARIS_BESTAETIGUNG", "ja").strip()
 
 # ---------- Pfade ----------
 W = Path.cwd()
 START = W / "Start_final.txt"
-HS    = W / "HS_Final.txt"
-KODA  = W / "KonDa_Final.txt"
+HS = W / "HS_Final.txt"
+KODA = W / "KonDa_Final.txt"
 
 # ---------- Hilfsfunktionen ----------
 def exists(p: Path) -> bool:
@@ -95,8 +95,6 @@ def cleanup_old_variants():
     else:
         print("Keine First/Final-Dateien gefunden – System bereits sauber.")
 
-<<<<<<< HEAD
-
 # ---------- STRIKTER DATEIFILTER ----------
 ALLOWED_EXTENSIONS = {"py"}
 ALLOWED_PATTERN = "_embedded_v3.py"
@@ -131,10 +129,6 @@ def disable_non_embedded_files(base_dir):
     else:
         print("✅ Nur eingebettete Dateien aktiv – OK.")
 
-
-
-=======
->>>>>>> 58022b633e72f7816e731558f3011e3e6251c0c9
 # ---------- PowerShell Blöcke ----------
 KOPPEL_BLOCK = """(dein bestehender PS-Block bleibt hier unverändert)"""
 VERIFY_BLOCK = """(dein bestehender VERIFY-Block bleibt hier unverändert)"""
@@ -191,10 +185,7 @@ def handle_input(user: str):
 
     if u == "Beginne jetzt die Freigabe":
         if STATE["koda_loaded"] and session_gate_for_koda():
-<<<<<<< HEAD
             disable_non_embedded_files(W)
-=======
->>>>>>> 58022b633e72f7816e731558f3011e3e6251c0c9
             cleanup_old_variants()  # 🧹 automatischer Löschvorgang
             print("Konsolidierungsdatei erkannt. Freigabeprozess wird geladen…")
             print("Bitte gib jetzt den vollständigen Ursprungssatz exakt ein.")
