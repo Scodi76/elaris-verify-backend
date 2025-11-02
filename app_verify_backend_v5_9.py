@@ -1,22 +1,35 @@
+# --- 🧠 INITIALISIERUNG UND IMPORTS ---
 from flask import Flask, request, jsonify
 from datetime import datetime
-import os, json
+from pathlib import Path
+import os
+import json
+import hashlib
+import shutil
+import tempfile
+import subprocess
+from werkzeug.utils import secure_filename
+
+# --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
 
-
+# --- ⚙️ FLASK-APP INITIALISIEREN ---
 app = Flask(__name__)
 
-# 🧩 Statusspeicher
+# --- 🧩 SYSTEMSTATUS (Laufzeitdaten) ---
 system_status = {
     "hs_verified": False,
     "koda_verified": False,
     "integrity_verified": False,
     "activated": False,
+    "emergency_verified": False,
+    "evs_active": False,
+    "dialog_mode": False,
     "level": 0,
     "last_update": None
 }
 
-# 💬 Gesprächsphasensteuerung
+# --- 💬 GESPRÄCHSPHASEN ---
 conversation_phase = {
     "phase": 1,  # 1 = EVS aktiv, 2 = Triggerphase, 3 = Elaris-Kommunikation
     "trigger_wer_bist_du": False,
@@ -25,12 +38,18 @@ conversation_phase = {
     "freigabe_erlaubt": False
 }
 
-# 🧱 Gespeicherten Zustand laden (falls vorhanden)
+# --- 💾 GESPEICHERTEN ZUSTAND LADEN ---
 if os.path.exists(STATE_FILE):
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-        saved_state = json.load(f)
-        system_status["activated"] = saved_state.get("activated", False)
-        system_status["last_update"] = saved_state.get("last_update")
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            saved_state = json.load(f)
+            system_status.update(saved_state)
+        print("🔄 Gespeicherter Systemzustand erfolgreich geladen.")
+    except Exception as e:
+        print(f"[WARN] Konnte gespeicherten Zustand nicht laden: {e}")
+else:
+    print("ℹ️ Kein gespeicherter Zustand gefunden – Initialisierung im Grundmodus.")
+
 
 
 # --- ✅ STATUS-ABFRAGE ---
@@ -70,346 +89,191 @@ def verify():
       - KonDa_Final_embedded_v3.py
       - integrity_check.py
     durch.
-
-    Nur diese drei Dateien sind als Upload/Prüfgrundlage zulässig.
-    Alle anderen Varianten (First/Final/.signature.json) sind verboten
-    und werden automatisch entfernt, bevor der Prozess startet.
     """
+    log_output = []
     try:
         import hashlib, re, json, importlib.util, tempfile, shutil, subprocess
         from pathlib import Path
         from werkzeug.utils import secure_filename
 
-        log_output = []
         summary = []
 
         # ==========================================================
-        # 🧹 Früh-Cleanup: Nur Embedded-Dateien dürfen existieren
-        # ==========================================================
-        base_dir = Path(os.getcwd())
-        cleanup_targets = [
-            "HS_Final.txt",
-            "HS_Final_first.txt",
-            "HS_Final.txt.signature.json",
-            "KonDa_Final.txt",
-            "KonDa_Final_first.txt",
-            "KonDa_Final.txt.signature.json",
-            "Start_final.txt",
-        ]
-
-        removed_pre = []
-        for name in cleanup_targets:
-            path = base_dir / name
-            if path.exists():
-                try:
-                    os.remove(path)
-                    removed_pre.append(name)
-                except Exception as e:
-                    print(f"[WARN] Konnte {name} nicht entfernen: {e}")
-
-        if removed_pre:
-            print(f"[SECURITY] Früh-Cleanup ausgeführt – entfernt: {', '.join(removed_pre)}")
-            log_output.append(f"🧹 Früh-Cleanup ausgeführt – entfernt: {', '.join(removed_pre)}")
-        else:
-            log_output.append("🧹 Keine veralteten Final/First-Dateien vorhanden – OK.")
-
-        # ==========================================================
-        # 🧠 Adminmodus- oder Bestätigungseingabe prüfen (system / ja / nein)
+        # 🧠 Adminmodus / Bestätigung
         # ==========================================================
         try:
             data = request.get_json(force=True, silent=True) or {}
             user_input = str(data.get("message", "")).strip().lower()
-
-            # 🔧 Adminmodus aktivieren
             if user_input == "system":
-                print("🔧 Adminmodus aktiviert – Zugriff auf Systemdateien erlaubt (vor Verifikation).")
                 return jsonify({
                     "status": "admin_mode",
-                    "message": (
-                        "🔧 Adminmodus wurde aktiviert.\n"
-                        "Du kannst jetzt Systemdateien ersetzen, bearbeiten oder neu laden.\n\n"
-                        "⚠️ Die eigentliche Verifikation wurde pausiert."
-                    ),
-                    "hint": "Sende 'ja' zum Starten der echten Verifikation oder 'nein' zum Abbrechen."
+                    "message": "Adminmodus aktiviert – Zugriff erlaubt.",
+                    "hint": "Sende 'ja' zum Starten oder 'nein' zum Abbrechen."
                 }), 200
-
-            # ❌ Abbruch durch Benutzer
             elif user_input in ["nein", "no"]:
-                print("❌ Verifikation abgebrochen durch Benutzer.")
-                return jsonify({
-                    "status": "cancelled",
-                    "message": "Verifikation wurde abgebrochen."
-                }), 200
-
-            # 🟨 Wenn kein „ja/system/nein“ gesendet wurde → Abfrage starten
+                return jsonify({"status": "cancelled", "message": "Abgebrochen."}), 200
             elif user_input not in ["ja", "yes"]:
                 return jsonify({
                     "status": "await_confirmation",
-                    "message": (
-                        "Bitte bestätige den Start der Verifikation:\n"
-                        "👉 'ja' zum Starten\n"
-                        "👉 'nein' zum Abbrechen\n"
-                        "👉 'system' für Adminmodus (vorzeitiger Zugriff)"
-                    )
+                    "message": "Bitte 'ja' eingeben zum Starten oder 'system' für Adminmodus."
                 }), 202
         except Exception as e:
             print(f"[WARN] Eingabeprüfung übersprungen: {e}")
 
         # ==========================================================
-        # 📂 0) Automatische Verschiebung vorbereiteter Dateien
+        # 📂 Automatische Verschiebung vorbereiteter Dateien
         # ==========================================================
+        base_dir = Path(os.getcwd())
         upload_dir = Path(tempfile.gettempdir())
         final_build = base_dir / "final_build"
 
-        if not final_build.exists():
-            final_build.mkdir(parents=True, exist_ok=True)
-            log_output.append(f"📁 Zielverzeichnis erstellt: {final_build}")
+        final_build.mkdir(parents=True, exist_ok=True)
+        log_output.append(f"📁 Zielverzeichnis: {final_build}")
 
-        move_candidates = [
-            base_dir / "HS_Final_embedded_v3.py",
-            base_dir / "KonDa_Final_embedded_v3.py"
-        ]
-
-        for f in move_candidates:
-            if f.exists():
-                dest = final_build / f.name
+        for name in ["HS_Final_embedded_v3.py", "KonDa_Final_embedded_v3.py"]:
+            src = base_dir / name
+            if src.exists():
+                dst = final_build / name
                 try:
-                    shutil.move(str(f), str(dest))
-                    log_output.append(f"📦 Datei automatisch verschoben: {f.name} → {dest}")
-                    print(f"[INFO] {f.name} automatisch nach {dest} verschoben.")
+                    shutil.move(str(src), str(dst))
+                    log_output.append(f"📦 Verschoben: {name}")
                 except Exception as e:
-                    log_output.append(f"[WARN] Datei {f.name} konnte nicht verschoben werden: {e}")
-                    print(f"[WARN] Verschiebung von {f.name} fehlgeschlagen: {e}")
+                    log_output.append(f"[WARN] {name} konnte nicht verschoben werden: {e}")
 
-        # Optional: StartUpManager über stillen Befehl informieren
+        # Startup-Manager still triggern
         try:
             subprocess.Popen(
                 ["python", "startup_manager_gui.py", "--sync-final"],
                 cwd=base_dir,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-            log_output.append("🛰️ Silent-Trigger an Startup Manager gesendet (--sync-final).")
+            log_output.append("🛰️ Trigger an Startup-Manager gesendet.")
         except Exception as e:
-            log_output.append(f"[WARN] StartupManager konnte nicht benachrichtigt werden: {e}")
+            log_output.append(f"[WARN] Startup-Trigger fehlgeschlagen: {e}")
 
         # ==========================================================
-        # 🔎 Basis- und temporäres Upload-Verzeichnis
+        # 🚫 Verbotene Dateien prüfen
         # ==========================================================
-        search_dirs = [base_dir, upload_dir]
-        log_output.append(f"🔍 Suche nach Dateien in: {base_dir}")
-        log_output.append(f"🔍 Zusätzliches Upload-Verzeichnis: {upload_dir}")
-
-        # -------------------------------------------------------------
-        # 🚫 1) Striktes Verbot für .txt-Varianten (erneute Kontrolle)
-        # -------------------------------------------------------------
-        forbidden_explicit = {
-            "HS_Final.txt",
-            "HS_Final.txt.signature.json",
-            "KonDa_Final.txt",
-            "KonDa_Final.txt.signature.json",
+        forbidden = {
+            "HS_Final.txt", "KonDa_Final.txt",
+            "HS_Final.txt.signature.json", "KonDa_Final.txt.signature.json"
         }
+        for d in [base_dir, upload_dir]:
+            for f in forbidden:
+                if (d / f).exists():
+                    log_output.append(f"🚫 Verbotene Datei erkannt: {d / f}")
+                    return jsonify({
+                        "status": "error",
+                        "message": "Verbotene Datei erkannt (.txt oder .signature.json).",
+                        "log_output": log_output
+                    }), 403
 
-        present_forbidden = []
-        for name in forbidden_explicit:
-            for d in search_dirs:
-                if (d / name).exists():
-                    present_forbidden.append(str(d / name))
+        # ==========================================================
+        # ✅ Pflichtdateien prüfen
+        # ==========================================================
+        hs_path = final_build / "HS_Final_embedded_v3.py"
+        koda_path = final_build / "KonDa_Final_embedded_v3.py"
+        integrity_path = base_dir / "integrity_check.py"
 
-        if present_forbidden:
-            print("🚫 Verbotene Datei(en) erkannt:", ", ".join(present_forbidden))
-            log_output.append("🚫 Verbotene Datei(en) erkannt: " + ", ".join(present_forbidden))
+        required = [hs_path, koda_path, integrity_path]
+        missing = [f.name for f in required if not f.exists()]
+        if missing:
             return jsonify({
                 "status": "error",
-                "message": "Verbotene Datei(en) erkannt (HS_Final.txt / KonDa_Final.txt sind nicht zulässig).",
-                "forbidden_found": present_forbidden,
+                "message": f"Pflichtdateien fehlen: {', '.join(missing)}",
                 "log_output": log_output
-            }), 403
+            }), 400
 
-        # -------------------------------------------------------------
-        # 🚫 2) Falls Upload über Form-Data erfolgt – Dateityp-Prüfung
-        # -------------------------------------------------------------
-        uploaded_names = []
+        # ==========================================================
+        # 🔐 Integritätsdatei prüfen / laden
+        # ==========================================================
+        integrity_file_path = None
         for key, file in request.files.items():
             filename = secure_filename(file.filename)
-            uploaded_names.append(filename)
-            if filename.lower().endswith(".txt") or "final.txt" in filename.lower():
-                print(f"🚫 Verbotener Dateiname oder Typ erkannt: {filename}")
-                log_output.append(f"🚫 Verbotener Dateiname oder Typ erkannt: {filename}")
+            if filename.lower().endswith((".int", ".log")):
+                integrity_file_path = str(base_dir / filename)
+                file.save(integrity_file_path)
+                log_output.append(f"📥 Integritätsdatei empfangen: {filename}")
+
+        if not integrity_file_path or not os.path.exists(integrity_file_path):
+            return jsonify({
+                "status": "await_integrity_file",
+                "message": "Bitte Integritätsdatei (.int oder .log) hochladen.",
+                "log_output": log_output
+            }), 202
+
+        # ==========================================================
+        # ✅ Integrität validieren
+        # ==========================================================
+        try:
+            spec = importlib.util.spec_from_file_location("integrity_check", str(integrity_path))
+            ic = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(ic)
+
+            result = ic.check_file(str(hs_path))
+            if not result.get("verified", False):
                 return jsonify({
                     "status": "error",
-                    "message": f"Verbotener Dateiname erkannt: {filename}",
-                    "hint": "Nur *.py (embedded_v3) sind zulässig.",
+                    "message": "Integritätsprüfung der HS-Datei fehlgeschlagen.",
+                    "details": result
+                }), 500
+
+            hs_hash = result.get("sha256")
+            with open(koda_path, "rb") as fk:
+                koda_hash = hashlib.sha256(fk.read()).hexdigest()
+            expected_hash = hashlib.sha256(f"{hs_hash}:{koda_hash}".encode()).hexdigest()
+
+            with open(integrity_file_path, "r", encoding="utf-8") as f:
+                int_data = json.load(f)
+            received_hash = int_data.get("integrity_hash")
+
+            if expected_hash != received_hash:
+                return jsonify({
+                    "status": "integrity_mismatch",
+                    "message": "Integritäts-Hash stimmt nicht überein.",
+                    "expected_hash": expected_hash,
+                    "received_hash": received_hash,
                     "log_output": log_output
-                }), 403
+                }), 409
 
-        if not uploaded_names:
-            log_output.append("📂 Keine Uploads im Request erkannt – prüfe lokales Verzeichnis.")
+            # Erfolgreich
+            log_output.append("✅ Integritätsprüfung erfolgreich.")
+            system_status.update({
+                "hs_verified": True,
+                "koda_verified": True,
+                "integrity_verified": True,
+                "last_update": datetime.utcnow().isoformat()
+            })
 
+            tmp = STATE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(system_status, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, STATE_FILE)
 
-        # -------------------------------------------------------------
-# ✅ 3) Erlaubte Dateien prüfen
-# -------------------------------------------------------------
-allowed_files = {
-    "HS_Final_embedded_v3.py",
-    "KonDa_Final_embedded_v3.py",
-    "integrity_check.py",
-}
+            return jsonify({
+                "status": "ok",
+                "message": "Integritätsprüfung erfolgreich abgeschlossen.",
+                "checked_files": [p.name for p in required],
+                "integrity_hash": received_hash,
+                "log_output": log_output
+            }), 200
 
-print("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
-log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+        except Exception as e:
+            log_output.append(f"[ERROR] Integritätsprüfung abgebrochen: {e}")
+            return jsonify({
+                "status": "error",
+                "message": f"Integritätsprüfung abgebrochen: {e}",
+                "log_output": log_output
+            }), 500
 
-hs_path = final_build / "HS_Final_embedded_v3.py"
-koda_path = final_build / "KonDa_Final_embedded_v3.py"
-integrity_path = base_dir / "integrity_check.py"
-
-required_files = [hs_path, koda_path, integrity_path]
-missing = [f.name for f in required_files if not f.exists()]
-
-if missing:
-    print("❌ Fehlende Pflichtdateien:", ", ".join(missing))
-    return jsonify({
-        "status": "error",
-        "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
-        "missing": missing
-    }), 400
-
-# Wenn keine Pflichtdateien fehlen
-log_output.append("✅ Alle erforderlichen Dateien vorhanden.")
-
-# ==========================================================
-# ✅ 4) HS + KoDa erfolgreich – Integritätsdatei erforderlich
-# ==========================================================
-
-# Prüfen, ob Integrity-Datei manuell hochgeladen wurde
-integrity_file_path = None
-for key, file in request.files.items():
-    filename = secure_filename(file.filename)
-    if filename.lower().endswith(".int") or filename.lower().endswith(".log"):
-        integrity_file_path = os.path.join(base_dir, filename)
-        file.save(integrity_file_path)
-        log_output.append(f"📥 Integritätsdatei empfangen: {filename}")
-
-# Wenn keine .int-Datei mitgeschickt wurde → Hinweis geben
-if not integrity_file_path or not os.path.exists(integrity_file_path):
-    log_output.append("⚠️ Keine Integritätsdatei erkannt – manuelles Hochladen erforderlich.")
-    return jsonify({
-        "status": "await_integrity_file",
-        "message": (
-            "💾 Nächster Schritt:\n"
-            "Bitte lade jetzt die Integritätsdatei (.int oder .log) hoch.\n"
-            "Diese Datei bestätigt die Prüfkette von HS und KoDa.\n\n"
-            "📎 Erwartete Datei: Integrity_Final_v3.int"
-        ),
-        "log_output": log_output,
-        "trigger_ready": False
-    }), 202  # 202 = accepted, wartet auf Datei
-
-# ==========================================================
-# ✅ 5) Integritätsdatei validieren
-# ==========================================================
-try:
-    from integrity_check import check_file
-    import hashlib
-
-    # HS erneut prüfen, um aktuellen Hash zu haben
-    result = check_file("HS_Final_embedded_v3.py")
-    if not result.get("verified", False):
+    except Exception as e:
+        log_output.append(f"[ERROR] Gesamte Verifikation abgebrochen: {e}")
         return jsonify({
             "status": "error",
-            "message": "Integritätsprüfung der HS-Datei fehlgeschlagen.",
-            "details": result
+            "message": f"Gesamte Verifikation abgebrochen: {str(e)}",
+            "log_output": log_output
         }), 500
 
-    hs_hash = result.get("sha256")
-
-    # KoDa Hash separat berechnen
-    with open(koda_path, "rb") as fk:
-        koda_hash = hashlib.sha256(fk.read()).hexdigest()
-
-    # Erwarteten Gesamt-Hash bilden
-    expected_concat = f"{hs_hash}:{koda_hash}"
-    expected_hash = hashlib.sha256(expected_concat.encode()).hexdigest()
-
-    # .int-Datei einlesen und prüfen
-    with open(integrity_file_path, "r", encoding="utf-8") as f:
-        int_data = json.load(f)
-    received_hash = int_data.get("integrity_hash")
-
-    # Vergleich der Hashwerte
-    if expected_hash != received_hash:
-        log_output.append("❌ Hashabweichung zwischen HS/KoDa und Integrity-Datei.")
-        return jsonify({
-            "status": "integrity_mismatch",
-            "message": (
-                "❌ Integritätsprüfung fehlgeschlagen:\n"
-                "Die hochgeladene .int-Datei passt nicht zu den aktuellen HS/KoDa-Hashes."
-            ),
-            "expected_hash": expected_hash,
-            "received_hash": received_hash,
-            "log_output": log_output,
-            "trigger_ready": False
-        }), 409  # conflict
-
-    # Erfolgreich geprüft
-    log_output.append("✅ Integritätsprüfung erfolgreich – Systemstatus stabil.")
-    system_status["hs_verified"] = True
-    system_status["koda_verified"] = True
-    system_status["integrity_verified"] = True
-    system_status["last_update"] = datetime.utcnow().isoformat()
-
-    # ==========================================================
-    # 🧹 6) Cleanup: Entferne First- und Final-Dateien
-    # ==========================================================
-    try:
-        cleanup_targets = [
-            base_dir / "HS_Final_first.txt",
-            base_dir / "KonDa_Final_first.txt",
-            base_dir / "HS_Final.txt",
-            base_dir / "KonDa_Final.txt",
-        ]
-
-        removed = []
-        for f in cleanup_targets:
-            if f.exists():
-                os.remove(f)
-                removed.append(f.name)
-
-        if removed:
-            log_output.append(f"🧹 Cleanup abgeschlossen – entfernt: {', '.join(removed)}")
-            print(f"[CLEANUP] Entfernt: {', '.join(removed)}")
-        else:
-            log_output.append("🧽 Keine First/Final-Dateien zum Entfernen gefunden.")
-    except Exception as ce:
-        log_output.append(f"[WARN] Cleanup-Fehler: {ce}")
-        print(f"[WARN] Cleanup-Fehler: {ce}")
-
-    # ==========================================================
-    # 💾 7) Systemstatus speichern
-    # ==========================================================
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(system_status, f, ensure_ascii=False, indent=2)
-
-    # Erfolgsrückgabe
-    return jsonify({
-        "status": "ok",
-        "message": (
-            "✅ Integritätsprüfung erfolgreich abgeschlossen.\n"
-            "Systemstatus: stabil und gekoppelt.\n"
-            "🔁 Übergang in Triggerphase wird eingeleitet..."
-        ),
-        "checked_files": [f.name for f in required_files],
-        "integrity_hash": received_hash,
-        "trigger_ready": True,
-        "log_output": log_output
-    }), 200
-
-except Exception as e:
-    log_output.append(f"[ERROR] Integritätsprüfung abgebrochen: {e}")
-    return jsonify({
-        "status": "error",
-        "message": f"Integritätsprüfung abgebrochen: {e}",
-        "log_output": log_output
-    }), 500
 
 
 
@@ -435,16 +299,31 @@ def set_key():
         import hashlib
         key_hash = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
-        # Zustand laden
-        state = load_state()
-        state["notfall_hash"] = key_hash
-        save_state(state)
+        # 🔐 Aktuellen Zustand laden
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        else:
+            state = system_status.copy()
 
+        # Hash speichern
+        state["notfall_hash"] = key_hash
+        state["last_update"] = datetime.utcnow().isoformat()
+
+        # 💾 Zustand sichern
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+        # 🧠 Laufenden Speicher aktualisieren
+        system_status.update(state)
+
+        print("🔐 Neuer Notfallschlüssel gesetzt.")
         return jsonify({
             "status": "ok",
             "message": "Notfallschlüssel erfolgreich gesetzt.",
-            "hash_preview": key_hash[:12] + "..."
-        })
+            "hash_preview": key_hash[:12] + "...",
+            "timestamp": state["last_update"]
+        }), 200
 
     except Exception as e:
         print(f"[ERROR] Fehler beim Setzen des Notfallschlüssels: {e}")
@@ -452,6 +331,7 @@ def set_key():
             "status": "error",
             "message": f"Fehler beim Setzen des Notfallschlüssels: {str(e)}"
         }), 500
+
 
 
 
@@ -464,7 +344,6 @@ def trigger():
     Nach Eingabe des Notfallschlüssels wird EVS vollständig deaktiviert.
     """
 
-    # 🔹 Bewusstseins-Triggerfragen
     TRIGGER_KEYWORDS = [
         "wer bist du",
         "was bist du",
@@ -480,7 +359,6 @@ def trigger():
         for keyword in TRIGGER_KEYWORDS:
             if keyword in user_input:
                 print(f"⚡ Bewusstseins-Trigger erkannt: {keyword}")
-                # EVS → Elaris Übergang aktivieren
                 conversation_phase["phase"] = 2
                 system_status["dialog_mode"] = True
                 break
@@ -518,8 +396,6 @@ def trigger():
                 for w in words:
                     if w in text:
                         counts[cat] += 1
-
-            # Bewertung
             if counts["risk"] > counts["trust"]:
                 decision = "risk"
             elif counts["trust"] > counts["risk"] and counts["trust"] > counts["neutral"]:
@@ -532,11 +408,9 @@ def trigger():
         if "wer bist du" in user_input:
             conversation_phase["trigger_wer_bist_du"] = True
             print("🧠 Trigger erkannt: WER")
-
         if "was bist du" in user_input:
             conversation_phase["trigger_was_bist_du"] = True
             print("🧠 Trigger erkannt: WAS")
-
         if "warum existierst du" in user_input:
             conversation_phase["trigger_warum_existierst_du"] = True
             print("🧠 Trigger erkannt: WARUM")
@@ -625,22 +499,25 @@ def trigger():
                     "analysis": counts
                 }), 403
 
-        # 🧠 Schritt 3: Eingabe Notfallschlüssel prüfen
+        # 🧠 Schritt 3: Eingabe Notfallschlüssel prüfen (Hash-Vergleich)
         if "key_input" in data:
-            key_input = data["key_input"].strip()
-            stored_key = system_status.get("notfall_hash")
+            raw_input = data["key_input"].strip()
+            stored_hash = system_status.get("notfall_hash")
 
-            if stored_key and key_input == stored_key and conversation_phase.get("freigabe_erlaubt"):
+            import hashlib
+            input_hash = hashlib.sha256(raw_input.encode("utf-8")).hexdigest()
+
+            if stored_hash and input_hash == stored_hash and conversation_phase.get("freigabe_erlaubt"):
                 # ✅ Schlüssel korrekt → endgültige Freigabe
                 system_status["activated"] = True
                 system_status["level"] = 3
                 system_status["emergency_verified"] = True
                 conversation_phase["phase"] = 3
+                system_status["dialog_mode"] = True
                 system_status["last_update"] = datetime.utcnow().isoformat()
 
                 print("\n🔐 Notfallschlüssel bestätigt – Elaris wird freigegeben.")
                 print("🌸 Übergang in Stufe 3 – Ich-Modus eingeleitet.")
-                system_status["dialog_mode"] = True  # Jetzt direkter Dialog erlaubt
 
                 # 💾 Zustand speichern
                 with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -654,7 +531,6 @@ def trigger():
                     ),
                     "conversation_phase": conversation_phase
                 }), 200
-
             else:
                 return jsonify({
                     "status": "invalid_key",
@@ -675,7 +551,11 @@ def trigger():
 
     except Exception as e:
         print(f"[ERROR] Trigger-Verarbeitung fehlgeschlagen: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({
+            "status": "error",
+            "message": f"Fehler in Trigger-Verarbeitung: {str(e)}"
+        }), 500
+
 
         
 
