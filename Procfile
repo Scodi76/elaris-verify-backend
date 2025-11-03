@@ -1,1 +1,1 @@
-web: python app_verify_backend_v5_9.py
+web: gunicorn app_verify_backend_v5_10:app --bind 0.0.0.0:$PORT --timeout 120
