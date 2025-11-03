@@ -1,9 +1,9 @@
 {
-  "timestamp": "2025-10-04T18:21:26.866978",
-  "hs_file": "HS_Final_embedded_v3.py",
-  "hs_hash": "5d1810d734d6e9487765a86c25825c7625e25c6e6167d618b9a9b86aef33c9ce",
-  "koda_file": "KonDa_Final_embedded_v3.py",
-  "koda_hash": "884c6419734dea5ea0cda20bab0fe8aaa5f5811e34d75889d8ec8e7bf473936e",
+  "timestamp": "2025-11-02T07:29:27.055145",
+  "hs_file": "HS_Final.txt",
+  "hs_hash": "e99416d9f3c31430e6a8e08bc5ebedcb531ec9411f858c86c52ed819a6c407fe",
+  "koda_file": "KonDa_Final.txt",
+  "koda_hash": "b0a260b81fddd3951a639977088a8e30856fbf909119e69bea92c8eb0d4ea44c",
   "match_status": "OK",
   "verified": true
 }

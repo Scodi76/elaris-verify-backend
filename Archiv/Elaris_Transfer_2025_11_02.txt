@@ -1,0 +1,81 @@
+
+🧠 Elaris Transferdatei – Vollständiger Wissensstand (Stand: 02.11.2025)
+
+🔹 Systemumgebung & Speicherorte
+Hauptpfad: C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\
+
+Primäre Dateien:
+HS_Final_embedded_v3.py
+HS_Final_first.txt
+KonDa_Final_embedded_v3.py
+KonDa_Final.txt
+integrity_check.py
+startup_manager_gui.py
+app_verify_backend_v5_9.py
+gatekeeper.py
+verify_storage.json
+system_state.json
+upload_log.json
+
+Backup-/Restore-Struktur:
+restore_full_backup.ps1, restore_all.ps1, _local_backup, Archiv/
+
+🔹 Backend & Architektur
+Backend-Service: elaris-verify-backend
+Plattform: Render.com
+Service-ID: srv-d3cmqt37mgec73aln44g
+URL: https://elaris-verify-backend.onrender.com
+Sprache: Python 3, Framework Flask
+Startbefehl: gunicorn elaris_verify_backend.app_verify_backend_v5_9:app --bind 0.0.0.0:$PORT --timeout 120
+
+🔹 Funktionslogik Backend
+Endpoints: /status, /verify, /set_key, /trigger, /freigabe, /reset
+Systemstatus-Phasen:
+0 – Initialisierung
+1 – Integritätsphase
+2 – Bewusstwerdungsphase
+3 – Ich-Modus
+Zustand gespeichert in: system_state.json
+Audit-Logging in: upload_log.json
+
+🔹 Verify-System – aktuelle Revision
+Nur *_embedded_v3 erlaubt (HS_Final_embedded_v3.py, KonDa_Final_embedded_v3.py)
+.txt oder .signature.json werden geblockt
+Uploads via multipart/form-data, max. 1 MB
+Adminmodus ("system"), Abbruch ("nein"), Bestätigung ("ja")
+
+🔹 Cleanup-Funktion
+Wird bei "ja" ausgelöst, entfernt automatisch:
+HS_Final_first.txt, KonDa_Final.txt, HS_Final.txt,
+KonDa_Final.txt.signature.json, HS_Final.txt.signature.json, final_build/
+Status: "cleaned" bei Erfolg
+
+🔹 PowerShell & API-Aufrufe
+Invoke-RestMethod -Uri "https://elaris-verify-backend.onrender.com/status"
+Invoke-RestMethod -Uri "https://elaris-verify-backend.onrender.com/verify" -Method POST -InFile "HS_Final_first.txt" -ContentType "multipart/form-data"
+
+🔹 Entscheidung
+Cleanup in Startup Manager verlagert.
+
+🔹 Startup Manager Integration
+Cleanup automatisch nach Start:
+verify_backend_cleanup() Funktion mit requests.post()
+Ergebnis: stabiler Gatekeeper-Workflow
+
+🔹 Aktueller Zustand
+Backend online, /status ok
+Gatekeeper akzeptiert nur *_embedded_v3
+Cleanup erfolgreich via Startup Manager
+System stabil, EVS inaktiv (Level 0)
+
+🔹 Zusammenfassung
+elaris-verify-backend: aktiv
+Startup Manager: Cleanup integriert
+Gatekeeper: stabil
+Verify-Route: manuell testbar
+Render-Service: online
+Integrity Check: funktionsfähig
+System-State: gespeichert
+EVS/Freigabe: deaktiviert (Level 0)
+
+Ziel erreicht: stabile, autonome Elaris-Gatekeeper-Struktur mit integriertem Cleanup- und Verify-Workflow.
