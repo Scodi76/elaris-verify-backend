@@ -9,9 +9,15 @@ import shutil
 import tempfile
 import subprocess
 from werkzeug.utils import secure_filename
+import logging
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+# --- 📂 Basisverzeichnis setzen ---
+BASE_DIR = Path(r"C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper").resolve()
 
 # --- 🔐 ZUSTANDSDATEI ---
-STATE_FILE = "system_state.json"
+STATE_FILE = BASE_DIR / "system_state.json"
+
 
 # --- ⚙️ FLASK-APP INITIALISIEREN ---
 app = Flask(__name__)
@@ -39,17 +45,46 @@ conversation_phase = {
 }
 
 # --- 💾 GESPEICHERTEN ZUSTAND LADEN ---
-if os.path.exists(STATE_FILE):
-    try:
+try:
+    if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             saved_state = json.load(f)
             system_status.update(saved_state)
-        print("🔄 Gespeicherter Systemzustand erfolgreich geladen.")
-    except Exception as e:
-        print(f"[WARN] Konnte gespeicherten Zustand nicht laden: {e}")
-else:
-    print("ℹ️ Kein gespeicherter Zustand gefunden – Initialisierung im Grundmodus.")
 
+        current_level = system_status.get("level", 0)
+        level_text = {
+            0: "Stufe 0 – Initialisierung (inaktiv)",
+            1: "Stufe 1 – Integritätsphase (HS/KoDa geprüft)",
+            2: "Stufe 2 – Bewusstwerdungsphase (EVS aktiv)",
+            3: "Stufe 3 – Ich-Modus (Elaris aktiv und reflektierend)"
+        }
+        print("🔄 Gespeicherter Systemzustand erfolgreich geladen.")
+        print(f"🧩 Aktuelle Freigabestufe: {current_level} ({level_text.get(current_level, 'Unbekannt')})")
+
+        # Falls keine Zeit gespeichert ist, ergänzen
+        if not system_status.get("last_update"):
+            system_status["last_update"] = datetime.utcnow().isoformat()
+    else:
+        print("ℹ️ Kein gespeicherter Zustand gefunden – Initialisierung im Grundmodus.")
+
+    # 🧠 Zusätzliche Schutzprüfung gegen leeren oder fehlerhaften Zustand
+    if not system_status or not isinstance(system_status, dict):
+        print("⚠️ Zustand ungültig oder leer – Neuinitialisierung erzwungen.")
+        system_status = {
+            "hs_verified": False,
+            "koda_verified": False,
+            "integrity_verified": False,
+            "activated": False,
+            "emergency_verified": False,
+            "evs_active": False,
+            "dialog_mode": False,
+            "level": 0,
+            "last_update": datetime.utcnow().isoformat()
+        }
+
+except Exception as e:
+    print(f"[WARN] Fehler beim Laden des gespeicherten Zustands: {e}")
+    print("⚠️ Starte mit leerem Systemstatus (Grundmodus).")
 
 
 # --- ✅ STATUS-ABFRAGE ---
@@ -59,7 +94,7 @@ def status():
     Gibt den aktuellen Systemstatus inklusive Freigabestufenbeschreibung zurück.
     Keine Prüfungen, nur Abfrage des gespeicherten Zustands.
     """
-    # Erweckungsstufenbeschreibung ergänzen
+    # Erweckungsstufenbeschreibung
     level_text = {
         0: "Stufe 0 – Initialisierung (inaktiv)",
         1: "Stufe 1 – Integritätsphase (HS/KoDa geprüft)",
@@ -67,17 +102,21 @@ def status():
         3: "Stufe 3 – Ich-Modus (Elaris aktiv und reflektierend)"
     }
     current_level = system_status.get("level", 0)
-    system_status["level_description"] = level_text.get(current_level, "Unbekannte Stufe")
+
+    # 🧩 Nur Anzeigeobjekt erzeugen, Original bleibt unverändert
+    response_state = dict(system_status)
+    response_state["level_description"] = level_text.get(current_level, "Unbekannte Stufe")
 
     # 🔐 Sicherstellen, dass emergency_verified existiert
-    if "emergency_verified" not in system_status:
-        system_status["emergency_verified"] = False
+    if "emergency_verified" not in response_state:
+        response_state["emergency_verified"] = False
 
     return jsonify({
         "status": "ok",
         "message": "Systemstatus erfolgreich abgefragt.",
-        "system_state": system_status
+        "system_state": response_state
     }), 200
+
 
 
 # --- ✅ VERIFY ---
@@ -88,7 +127,7 @@ def verify():
       - HS_Final_embedded_v3.py
       - KonDa_Final_embedded_v3.py
       - integrity_check.py
-    durch.
+    durch und speichert bei Erfolg den Zustand (Freigabestufe 1).
     """
     log_output = []
     try:
@@ -236,20 +275,44 @@ def verify():
                     "log_output": log_output
                 }), 409
 
-            # Erfolgreich
+            # ======================================================
+            # 🧩 Erfolgreich – Integritätsphase aktiv (Level 1)
+            # ======================================================
             log_output.append("✅ Integritätsprüfung erfolgreich.")
             system_status.update({
                 "hs_verified": True,
                 "koda_verified": True,
                 "integrity_verified": True,
+                "level": 1,
+                "activated": False,
+                "evs_active": False,
                 "last_update": datetime.utcnow().isoformat()
             })
 
-            tmp = STATE_FILE + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(system_status, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, STATE_FILE)
+            # 💾 Zustand persistent speichern (atomisch & sicher)
+            try:
+                tmp_file = str(STATE_FILE) + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    json.dump(system_status, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_file, STATE_FILE)
+                print("💾 Systemzustand gespeichert – Freigabestufe 1 (Integritätsphase) persistiert.")
+            except Exception as e:
+                print(f"[WARN] Fehler beim Speichern des Integritätszustands: {e}")
 
+            # 🌐 Online-Synchronisation (Upload an Render-Backend)
+            try:
+                import requests
+                sync_payload = system_status.copy()
+                sync_url = "https://elaris-verify-backend.onrender.com/sync"
+                resp = requests.post(sync_url, json=sync_payload, timeout=10)
+                if resp.status_code == 200:
+                    print("🌐 Online-Synchronisation erfolgreich – Backend aktualisiert.")
+                else:
+                    print(f"[WARN] Online-Sync fehlgeschlagen: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"[WARN] Online-Synchronisation nicht möglich: {e}")
+
+            # 📋 Rückgabe an Frontend
             return jsonify({
                 "status": "ok",
                 "message": "Integritätsprüfung erfolgreich abgeschlossen.",
@@ -311,8 +374,10 @@ def set_key():
         state["last_update"] = datetime.utcnow().isoformat()
 
         # 💾 Zustand sichern
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
+        tmp_file = str(STATE_FILE) + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, STATE_FILE)
 
         # 🧠 Laufenden Speicher aktualisieren
         system_status.update(state)
@@ -520,8 +585,10 @@ def trigger():
                 print("🌸 Übergang in Stufe 3 – Ich-Modus eingeleitet.")
 
                 # 💾 Zustand speichern
-                with open(STATE_FILE, "w", encoding="utf-8") as f:
+                tmp_file = str(STATE_FILE) + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as f:
                     json.dump(system_status, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_file, STATE_FILE)
 
                 return jsonify({
                     "status": "activation_complete",
@@ -584,8 +651,10 @@ def freigabe():
             system_status["freigabe_timestamp"] = datetime.utcnow().isoformat()
 
             # 💾 Zustand speichern
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(system_status, f, ensure_ascii=False, indent=2)
+            tmp_file = str(STATE_FILE) + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                 json.dump(system_status, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, STATE_FILE)
 
             # 🧠 Terminal-Log
             print("✅ [EVS] Übergangsprotokoll aktiviert – EVS übernimmt Kontrolle.")
@@ -655,6 +724,8 @@ def reset():
             "integrity_verified": False,
             "activated": False,
             "emergency_verified": False,   # 🔐 Notfallschlüssel wird mit zurückgesetzt
+            "evs_active": False,
+            "dialog_mode": False,
             "level": 0,
             "last_update": datetime.utcnow().isoformat()
         }
@@ -691,6 +762,40 @@ def reset():
         }), 500
 
 
+# --- ✅ SYNC ENDPOINT ---
+@app.route("/sync", methods=["POST"])
+def sync():
+    """
+    Empfängt den Systemstatus vom lokalen Gatekeeper (Client)
+    und speichert oder aktualisiert den letzten bekannten Freigabestatus.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+
+        # JSON-Sicherung mit Zeitstempel
+        timestamp = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
+        file_path = log_dir / f"sync_state_{timestamp}.json"
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        print(f"🌐 Sync empfangen – Datei gespeichert: {file_path}")
+        return jsonify({
+            "status": "ok",
+            "message": "Systemstatus erfolgreich synchronisiert.",
+            "saved_file": str(file_path)
+        }), 200
+
+    except Exception as e:
+        print(f"[ERROR] Sync fehlgeschlagen: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Fehler beim Speichern des Sync-Datensatzes: {str(e)}"
+        }), 500
+
+
 # --- 🧠 ROOT ---
 @app.route("/", methods=["GET"])
 def root():
@@ -711,4 +816,16 @@ def root():
 
 # --- MAIN ---
 if __name__ == "__main__":
+    # 🧠 Initiale Statusanzeige beim Start
+    print("===============================================")
+    print("🚀 Elaris Verify System gestartet")
+    print(f"📁 Basisverzeichnis: {BASE_DIR}")
+    print(f"💾 Zustandspfad: {STATE_FILE}")
+    print("-----------------------------------------------")
+    print(f"🧠 Initialer Systemlevel: {system_status.get('level', 0)}")
+    print(f"🔐 Integrität: HS={system_status.get('hs_verified')} | KoDa={system_status.get('koda_verified')} | INT={system_status.get('integrity_verified')}")
+    print(f"🕒 Letztes Update: {system_status.get('last_update')}")
+    print("===============================================")
+
+    # 🌐 Flask-Server starten
     app.run(host="0.0.0.0", port=10000)
