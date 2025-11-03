@@ -10,32 +10,6 @@ import tempfile
 import subprocess
 from werkzeug.utils import secure_filename
 
-
-# --- 🧾 AUDIT-LOG EINSTELLUNGEN ---
-AUDIT_LOG_FILE = "upload_log.json"
-
-def write_audit_log(entry: dict):
-    """
-    Schreibt einen Upload-Audit-Eintrag in upload_log.json.
-    Erstellt Datei bei Bedarf und hängt an, um Manipulationsschutz zu sichern.
-    """
-    try:
-        log_path = Path(AUDIT_LOG_FILE)
-        logs = []
-        if log_path.exists():
-            with open(log_path, "r", encoding="utf-8") as f:
-                logs = json.load(f)
-                if not isinstance(logs, list):
-                    logs = []
-
-        logs.append(entry)
-        with open(log_path, "w", encoding="utf-8") as f:
-            json.dump(logs, f, ensure_ascii=False, indent=2)
-    except Exception as log_err:
-        print(f"[WARN] Audit-Log konnte nicht geschrieben werden: {log_err}")
-
-
-
 # --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
 
@@ -114,180 +88,319 @@ def verify():
       - HS_Final_embedded_v3.py
       - KonDa_Final_embedded_v3.py
       - integrity_check.py
-    durch, inklusive Audit-Logging und optionalem Cleanup bei "ja".
+    durch.
+
+    Nur diese drei Dateien sind als Upload/Prüfgrundlage zulässig.
+    HS_Final.txt und KonDa_Final.txt (sowie deren signature.json) sind EXPLIZIT VERBOTEN.
+    Jede Prüfung wird vollständig angezeigt; am Ende erfolgt eine detaillierte Gesamtbewertung.
     """
-    log_output = []
+    log_output = []  # <-- Fix: außerhalb des try initialisiert, damit auch im except existiert
     try:
         import hashlib, re, json, importlib.util, tempfile, shutil, subprocess
         from pathlib import Path
         from werkzeug.utils import secure_filename
 
-        # --- 🔍 Audit-Log: Upload-Versuch erfassen ---
-        client_ip = request.remote_addr or "unknown"
-        upload_entry = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "client_ip": client_ip,
-            "file": None,
-            "size_bytes": None,
-            "status": "pending",
-            "message": ""
-        }
-
-        if request.files:
-            for f in request.files.values():
-                f.seek(0, os.SEEK_END)
-                upload_entry["file"] = f.filename
-                upload_entry["size_bytes"] = f.tell()
-                f.seek(0)
-        else:
-            upload_entry["file"] = "direct_payload"
-            upload_entry["size_bytes"] = len(request.data or b"")
-
-        def finalize_audit(status_text: str, http_code: int, message: str):
-            upload_entry.update({
-                "status": status_text,
-                "http_code": http_code,
-                "message": message
-            })
-            try:
-                if upload_entry.get("file") and os.path.exists(upload_entry["file"]):
-                    with open(upload_entry["file"], "rb") as ftmp:
-                        upload_entry["sha256"] = hashlib.sha256(ftmp.read()).hexdigest()
-            except Exception:
-                pass
-            write_audit_log(upload_entry)
-
         summary = []
 
         # ==========================================================
-        # 🚫 Sicherheits-Check: Nur *_embedded_v3* Dateien zulassen
-        # ==========================================================
-        try:
-            if request.files:
-                for f in request.files.values():
-                    filename = f.filename.lower()
-                    if not (
-                        filename.endswith("_embedded_v3.py")
-                        or filename.endswith("_embedded_v3.txt")
-                        or "embedded_v3" in filename
-                    ):
-                        response = {
-                            "status": "rejected",
-                            "message": f"❌ Upload verweigert: '{filename}' ist keine *_embedded_v3*-Datei.",
-                            "hint": "Nur HS_Final_embedded_v3.py und KonDa_Final_embedded_v3.py sind erlaubt."
-                        }
-                        finalize_audit("rejected", 400, response["message"])
-                        print(f"[SECURITY] Upload blockiert: {response}")
-                        return jsonify(response), 400
-            else:
-                if "embedded_v3" not in str(request.data).lower():
-                    msg = "❌ Upload verweigert: Datei entspricht nicht dem *_embedded_v3*-Format."
-                    finalize_audit("rejected", 400, msg)
-                    return jsonify({
-                        "status": "rejected",
-                        "message": msg,
-                        "hint": "Bitte nur geprüfte Embedded-Versionen hochladen."
-                    }), 400
-        except Exception as sec_err:
-            print(f"[WARN] Sicherheitsprüfung konnte nicht durchgeführt werden: {sec_err}")
-
-        # ==========================================================
-        # 📏 Größenlimit für Uploads (max. 1 MB)
-        # ==========================================================
-        MAX_UPLOAD_SIZE = 1 * 1024 * 1024
-        if request.files:
-            for f in request.files.values():
-                f.seek(0, os.SEEK_END)
-                size = f.tell()
-                f.seek(0)
-                if size > MAX_UPLOAD_SIZE:
-                    msg = f"❌ Upload verweigert: Datei '{f.filename}' überschreitet das 1 MB-Limit."
-                    finalize_audit("too_large", 413, msg)
-                    return jsonify({
-                        "status": "rejected",
-                        "message": msg,
-                        "size_bytes": size,
-                        "hint": "Bitte nur geprüfte *_embedded_v3.py-Dateien unter 1 MB hochladen."
-                    }), 413
-
-        # ==========================================================
-        # 🧠 Adminmodus / Bestätigung
+        # 🧠 Adminmodus- oder Bestätigungseingabe prüfen (system / ja / nein)
         # ==========================================================
         try:
             data = request.get_json(force=True, silent=True) or {}
             user_input = str(data.get("message", "")).strip().lower()
+
+            # 🔧 Adminmodus aktivieren
             if user_input == "system":
-                finalize_audit("admin_mode", 200, "Adminmodus aktiviert.")
+                print("🔧 Adminmodus aktiviert – Zugriff auf Systemdateien erlaubt (vor Verifikation).")
                 return jsonify({
                     "status": "admin_mode",
-                    "message": "Adminmodus aktiviert – Zugriff erlaubt.",
-                    "hint": "Sende 'ja' zum Starten oder 'nein' zum Abbrechen."
+                    "message": (
+                        "🔧 Adminmodus wurde aktiviert.\n"
+                        "Du kannst jetzt Systemdateien ersetzen, bearbeiten oder neu laden.\n\n"
+                        "⚠️ Die eigentliche Verifikation wurde pausiert."
+                    ),
+                    "hint": "Sende 'ja' zum Starten der echten Verifikation oder 'nein' zum Abbrechen."
                 }), 200
+
+            # ❌ Abbruch durch Benutzer
             elif user_input in ["nein", "no"]:
-                finalize_audit("cancelled", 200, "Abgebrochen.")
-                return jsonify({"status": "cancelled", "message": "Abgebrochen."}), 200
+                print("❌ Verifikation abgebrochen durch Benutzer.")
+                return jsonify({
+                    "status": "cancelled",
+                    "message": "Verifikation wurde abgebrochen."
+                }), 200
+
+            # 🟨 Wenn kein „ja/system/nein“ gesendet wurde → Abfrage starten
             elif user_input not in ["ja", "yes"]:
-                finalize_audit("await_confirmation", 202, "Bestätigung ausstehend.")
                 return jsonify({
                     "status": "await_confirmation",
-                    "message": "Bitte 'ja' eingeben zum Starten oder 'system' für Adminmodus."
+                    "message": (
+                        "Bitte bestätige den Start der Verifikation:\n"
+                        "👉 'ja' zum Starten\n"
+                        "👉 'nein' zum Abbrechen\n"
+                        "👉 'system' für Adminmodus (vorzeitiger Zugriff)"
+                    )
                 }), 202
         except Exception as e:
             print(f"[WARN] Eingabeprüfung übersprungen: {e}")
 
         # ==========================================================
-        # 🧹 CLEANUP-BLOCK – bei Eingabe "ja"
-        # ==========================================================
-        if user_input in ["ja", "yes"]:
-            cleanup_paths = [
-                Path("HS_Final_first.txt"),
-                Path("KonDa_Final.txt"),
-                Path("HS_Final.txt"),
-                Path("KonDa_Final.txt.signature.json"),
-                Path("HS_Final.txt.signature.json"),
-                Path("final_build")
-            ]
-            removed = []
-            for p in cleanup_paths:
-                try:
-                    if p.is_dir():
-                        shutil.rmtree(p)
-                        removed.append(str(p) + "/")
-                    elif p.exists():
-                        p.unlink()
-                        removed.append(str(p))
-                except Exception as e:
-                    log_output.append(f"[WARN] {p} konnte nicht gelöscht werden: {e}")
-
-            log_output.append(f"🧹 Cleanup abgeschlossen: {', '.join(removed) if removed else 'nichts zu löschen.'}")
-            finalize_audit("cleaned", 200, "Cleanup erfolgreich durchgeführt.")
-            return jsonify({
-                "status": "cleaned",
-                "message": "Alte Dateien wurden entfernt. Du kannst jetzt den neuen Upload starten.",
-                "removed": removed
-            }), 200
-
-        # ==========================================================
-        # 📂 Automatische Verschiebung vorbereiteter Dateien
+        # 📂 0) Automatische Verschiebung vorbereiteter Dateien
         # ==========================================================
         base_dir = Path(os.getcwd())
         upload_dir = Path(tempfile.gettempdir())
         final_build = base_dir / "final_build"
 
-        final_build.mkdir(parents=True, exist_ok=True)
-        log_output.append(f"📁 Zielverzeichnis: {final_build}")
+        if not final_build.exists():
+            final_build.mkdir(parents=True, exist_ok=True)
+            log_output.append(f"📁 Zielverzeichnis erstellt: {final_build}")
 
-        for name in ["HS_Final_embedded_v3.py", "KonDa_Final_embedded_v3.py"]:
-            src = base_dir / name
-            if src.exists():
-                dst = final_build / name
+        move_candidates = [
+            base_dir / "HS_Final_embedded_v3.py",
+            base_dir / "KonDa_Final_embedded_v3.py"
+        ]
+
+        for f in move_candidates:
+            if f.exists():
+                dest = final_build / f.name
                 try:
-                    shutil.move(str(src), str(dst))
-                    log_output.append(f"📦 Verschoben: {name}")
+                    shutil.move(str(f), str(dest))
+                    log_output.append(f"📦 Datei automatisch verschoben: {f.name} → {dest}")
+                    print(f"[INFO] {f.name} automatisch nach {dest} verschoben.")
                 except Exception as e:
-                    log_output.append(f"[WARN] {name} konnte nicht verschoben werden: {e}")
+                    log_output.append(f"[WARN] Datei {f.name} konnte nicht verschoben werden: {e}")
+                    print(f"[WARN] Verschiebung von {f.name} fehlgeschlagen: {e}")
 
-        # ... (ab hier bleibt alles wie in deiner Version)
+        # Optional: StartUpManager benachrichtigen
+        try:
+            subprocess.Popen(
+                ["python", "startup_manager_gui.py", "--sync-final"],
+                cwd=base_dir,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            log_output.append("🛰️ Silent-Trigger an Startup Manager gesendet (--sync-final).")
+        except Exception as e:
+            log_output.append(f"[WARN] StartupManager konnte nicht benachrichtigt werden: {e}")
+
+        # ==========================================================
+        # 🔎 Basis- und temporäres Upload-Verzeichnis
+        # ==========================================================
+        search_dirs = [base_dir, upload_dir]
+        log_output.append(f"🔍 Suche nach Dateien in: {base_dir}")
+        log_output.append(f"🔍 Zusätzliches Upload-Verzeichnis: {upload_dir}")
+
+        # -------------------------------------------------------------
+        # 🚫 1) Striktes Verbot für .txt-Varianten
+        # -------------------------------------------------------------
+        forbidden_explicit = {
+            "HS_Final.txt",
+            "HS_Final.txt.signature.json",
+            "KonDa_Final.txt",
+            "KonDa_Final.txt.signature.json",
+        }
+
+        present_forbidden = []
+        for name in forbidden_explicit:
+            for d in search_dirs:
+                if (d / name).exists():
+                    present_forbidden.append(str(d / name))
+
+        if present_forbidden:
+            print("🚫 Verbotene Datei(en) erkannt:", ", ".join(present_forbidden))
+            log_output.append("🚫 Verbotene Datei(en) erkannt: " + ", ".join(present_forbidden))
+            return jsonify({
+                "status": "error",
+                "message": "Verbotene Datei(en) erkannt (HS_Final.txt / KonDa_Final.txt sind nicht zulässig).",
+                "forbidden_found": present_forbidden,
+                "log_output": log_output
+            }), 403
+
+        # -------------------------------------------------------------
+        # 🚫 2) Falls Upload über Form-Data erfolgt – Dateityp-Prüfung
+        # -------------------------------------------------------------
+        uploaded_names = []
+        for key, file in request.files.items():
+            filename = secure_filename(file.filename)
+            uploaded_names.append(filename)
+            if filename.lower().endswith(".txt") or "final.txt" in filename.lower():
+                print(f"🚫 Verbotener Dateiname oder Typ erkannt: {filename}")
+                log_output.append(f"🚫 Verbotener Dateiname oder Typ erkannt: {filename}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Verbotener Dateiname erkannt: {filename}",
+                    "hint": "Nur *.py (embedded_v3) sind zulässig.",
+                    "log_output": log_output
+                }), 403
+
+        if not uploaded_names:
+            log_output.append("📂 Keine Uploads im Request erkannt – prüfe lokales Verzeichnis.")
+
+        # -------------------------------------------------------------
+        # ✅ 3) Erlaubte Dateien prüfen
+        # -------------------------------------------------------------
+        allowed_files = {
+            "HS_Final_embedded_v3.py",
+            "KonDa_Final_embedded_v3.py",
+            "integrity_check.py",
+        }
+
+        print("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+        log_output.append("🧠 Starte vollständige Echtprüfung (HS / KoDa / Integrität)...")
+
+        hs_path = final_build / "HS_Final_embedded_v3.py"
+        koda_path = final_build / "KonDa_Final_embedded_v3.py"
+        integrity_path = base_dir / "integrity_check.py"
+
+        required_files = [hs_path, koda_path, integrity_path]
+        missing = [f.name for f in required_files if not f.exists()]
+
+        if missing:
+            print("❌ Fehlende Pflichtdateien:", ", ".join(missing))
+            return jsonify({
+                "status": "error",
+                "message": "Pflichtdateien fehlen – Integritätsprüfung kann nicht fortgesetzt werden.",
+                "missing": missing
+            }), 400
+
+        log_output.append("✅ Alle erforderlichen Dateien vorhanden.")
+
+        # ==========================================================
+        # ✅ 4) HS + KoDa erfolgreich – Integritätsdatei erforderlich
+        # ==========================================================
+        integrity_file_path = None
+        for key, file in request.files.items():
+            filename = secure_filename(file.filename)
+            if filename.lower().endswith(".int") or filename.lower().endswith(".log"):
+                integrity_file_path = os.path.join(base_dir, filename)
+                file.save(integrity_file_path)
+                log_output.append(f"📥 Integritätsdatei empfangen: {filename}")
+
+        if not integrity_file_path or not os.path.exists(integrity_file_path):
+            log_output.append("⚠️ Keine Integritätsdatei erkannt – manuelles Hochladen erforderlich.")
+            return jsonify({
+                "status": "await_integrity_file",
+                "message": (
+                    "💾 Nächster Schritt:\n"
+                    "Bitte lade jetzt die Integritätsdatei (.int oder .log) hoch.\n"
+                    "Diese Datei bestätigt die Prüfkette von HS und KoDa.\n\n"
+                    "📎 Erwartete Datei: Integrity_Final_v3.int"
+                ),
+                "log_output": log_output,
+                "trigger_ready": False
+            }), 202
+
+        # ==========================================================
+        # ✅ 5) Integritätsdatei validieren
+        # ==========================================================
+        try:
+            from integrity_check import check_file
+            import hashlib
+
+            result = check_file("HS_Final_embedded_v3.py")
+            if not result.get("verified", False):
+                return jsonify({
+                    "status": "error",
+                    "message": "Integritätsprüfung der HS-Datei fehlgeschlagen.",
+                    "details": result
+                }), 500
+
+            hs_hash = result.get("sha256")
+
+            with open(koda_path, "rb") as fk:
+                koda_hash = hashlib.sha256(fk.read()).hexdigest()
+
+            expected_concat = f"{hs_hash}:{koda_hash}"
+            expected_hash = hashlib.sha256(expected_concat.encode()).hexdigest()
+
+            with open(integrity_file_path, "r", encoding="utf-8") as f:
+                int_data = json.load(f)
+            received_hash = int_data.get("integrity_hash")
+
+            if expected_hash != received_hash:
+                log_output.append("❌ Hashabweichung zwischen HS/KoDa und Integrity-Datei.")
+                return jsonify({
+                    "status": "integrity_mismatch",
+                    "message": (
+                        "❌ Integritätsprüfung fehlgeschlagen:\n"
+                        "Die hochgeladene .int-Datei passt nicht zu den aktuellen HS/KoDa-Hashes."
+                    ),
+                    "expected_hash": expected_hash,
+                    "received_hash": received_hash,
+                    "log_output": log_output,
+                    "trigger_ready": False
+                }), 409
+
+            log_output.append("✅ Integritätsprüfung erfolgreich – Systemstatus stabil.")
+            system_status["hs_verified"] = True
+            system_status["koda_verified"] = True
+            system_status["integrity_verified"] = True
+            system_status["last_update"] = datetime.utcnow().isoformat()
+
+            # ==========================================================
+            # 🧹 6) Cleanup
+            # ==========================================================
+            try:
+                cleanup_targets = [
+                    base_dir / "HS_Final_first.txt",
+                    base_dir / "KonDa_Final_first.txt",
+                    base_dir / "HS_Final.txt",
+                    base_dir / "KonDa_Final.txt",
+                ]
+                removed = []
+                for f in cleanup_targets:
+                    if f.exists():
+                        os.remove(f)
+                        removed.append(f.name)
+
+                if removed:
+                    log_output.append(f"🧹 Cleanup abgeschlossen – entfernt: {', '.join(removed)}")
+                    print(f"[CLEANUP] Entfernt: {', '.join(removed)}")
+                else:
+                    log_output.append("🧽 Keine First/Final-Dateien zum Entfernen gefunden.")
+            except Exception as ce:
+                log_output.append(f"[WARN] Cleanup-Fehler: {ce}")
+                print(f"[WARN] Cleanup-Fehler: {ce}")
+
+            # ==========================================================
+            # 💾 7) Systemstatus speichern
+            # ==========================================================
+            tmp_file = STATE_FILE + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(system_status, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, STATE_FILE)
+
+            return jsonify({
+                "status": "ok",
+                "message": (
+                    "✅ Integritätsprüfung erfolgreich abgeschlossen.\n"
+                    "Systemstatus: stabil und gekoppelt.\n"
+                    "🔁 Übergang in Triggerphase wird eingeleitet..."
+                ),
+                "checked_files": [f.name for f in required_files],
+                "integrity_hash": received_hash,
+                "trigger_ready": True,
+                "log_output": log_output
+            }), 200
+
+        except Exception as e:
+            log_output.append(f"[ERROR] Integritätsprüfung abgebrochen: {e}")
+            return jsonify({
+                "status": "error",
+                "message": f"Integritätsprüfung abgebrochen: {e}",
+                "log_output": log_output
+            }), 500
+
+    # ==========================================================
+    # ⛔ Abfang des äußeren try-Blocks
+    # ==========================================================
+    except Exception as e:
+        log_output.append(f"[ERROR] Verifikation insgesamt abgebrochen: {e}")
+        print(f"[ERROR] Verifikation insgesamt abgebrochen: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Verifikation insgesamt abgebrochen: {str(e)}",
+            "log_output": log_output
+        }), 500
 
 
 
