@@ -52,9 +52,6 @@ def get_state_blueprint():
         }), 500
 
 
-# Blueprint registrieren
-app.register_blueprint(state_bp)
-
 # --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
 
@@ -963,19 +960,30 @@ def reset():
 # --- 🧠 ROOT ---
 @app.route("/", methods=["GET"])
 def root():
+    """
+    Gibt den allgemeinen Systemstatus zurück und listet alle verfügbaren Endpoints auf.
+    Wird als Root-Endpunkt verwendet, um die API-Struktur sichtbar zu machen.
+    """
     return jsonify({
         "status": "online",
+        "message": "Elaris Verify Backend läuft stabil.",
         "available_endpoints": [
             "/status",
             "/state",
             "/verify",
-            "/set_key",       # 🔐 Neu hinzugefügt
+            "/set_key",       # 🔐 Notfallschlüssel
             "/trigger",
             "/freigabe",
             "/reset"
         ]
     }), 200
-print("✅ /state Endpoint erfolgreich registriert.")
+
+
+# --- 🔁 Blueprint-Registrierung NACH allen Routen ---
+# Dadurch bleibt /state auch bei Render-Deployments stabil erreichbar.
+app.register_blueprint(state_bp)
+print("✅ /state Endpoint erfolgreich registriert (nach Root).")
+
 
 
 
