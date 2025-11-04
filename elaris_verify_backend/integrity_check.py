@@ -143,7 +143,7 @@ def check_file(path: str):
     # 🧩 Fortschritt speichern (Fortsetzungsmodus)
     # ==========================================================
     try:
-        state_path = Path(__file__).parent / "system_state.json"
+        state_path = Path("C:/Elaris_Backend/data/system_state.json")
 
         # Basisdaten
         system_state = {
