@@ -403,6 +403,46 @@ def verify():
         }), 500
 
 
+# --- ✅ SYNC ENDPOINT ---
+@app.route("/sync", methods=["POST"])
+def sync():
+    """
+    Empfängt den Systemstatus vom lokalen Gatekeeper (Client)
+    und speichert oder aktualisiert den letzten bekannten Freigabestatus.
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        if not data:
+            return jsonify({"error": "Keine Daten empfangen"}), 400
+
+        # Aktuellen Zustand laden
+        state = system_status.copy()
+        state["last_sync"] = {
+            "source": data.get("source", "unknown"),
+            "status": data.get("status", "undefined"),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+        # Speichern
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+        system_status.update(state)
+
+        print(f"🔄 Sync von {data.get('source', 'unknown')} empfangen – Status: {data.get('status', 'undefined')}")
+
+        return jsonify({
+            "status": "ok",
+            "message": "Sync erfolgreich empfangen.",
+            "received": state["last_sync"]
+        }), 200
+
+    except Exception as e:
+        print(f"[ERROR] Sync fehlgeschlagen: {e}")
+        return jsonify({
+            "status": "error",
+            "message": f"Fehler beim Sync: {str(e)}"
+        }), 500
 
 
 # --- ✅ NOTFALLSCHLÜSSEL SETZEN ---
