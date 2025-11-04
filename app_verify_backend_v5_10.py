@@ -38,6 +38,44 @@ conversation_phase = {
     "freigabe_erlaubt": False
 }
 
+
+# ======================================================
+# 🧩 Persistente Systemzustands-Verwaltung
+# ======================================================
+def load_system_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[WARN] Konnte system_state.json nicht laden: {e}")
+    # Fallback-Initialzustand
+    return {
+        "last_sync": None,
+        "last_upload": None,
+        "verified_files": 0,
+        "warnings": 0,
+        "errors": 0,
+        "status": "idle",
+        "source": None
+    }
+
+
+def save_system_state(state: dict):
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Konnte system_state.json nicht speichern: {e}")
+        return False
+
+
+# --- Globales Objekt im Speicher halten ---
+system_state = load_system_state()
+
+
+
 # --- 💾 GESPEICHERTEN ZUSTAND LADEN ---
 if os.path.exists(STATE_FILE):
     try:
@@ -78,6 +116,35 @@ def status():
         "message": "Systemstatus erfolgreich abgefragt.",
         "system_state": system_status
     }), 200
+
+
+# --- ✅ DIREKTE ZUSTANDSABFRAGE ---
+@app.route("/state", methods=["GET"])
+def get_state():
+    """
+    Gibt den kompletten gespeicherten system_state.json-Inhalt direkt zurück.
+    Nützlich für externe Tools (Startup Manager, Gatekeeper, etc.).
+    """
+    try:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            return jsonify({
+                "status": "ok",
+                "message": "Gespeicherter Zustand erfolgreich abgerufen.",
+                "state": state
+            }), 200
+        else:
+            return jsonify({
+                "status": "missing",
+                "message": "Keine gespeicherte system_state.json gefunden."
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Fehler beim Laden des gespeicherten Zustands: {e}"
+        }), 500
+
 
 
 # --- ✅ VERIFY ---
