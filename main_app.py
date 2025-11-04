@@ -16,18 +16,21 @@ print("🆕 Flask backend reloaded – state endpoint active.")
 app = Flask(__name__)
 
 # --- ✅ STATE ENDPOINT via Blueprint ---
-from flask import Blueprint
+from flask import Blueprint, jsonify
+import os, json
 
-state_bp = Blueprint('state_bp', __name__)
+state_bp = Blueprint("state_bp", __name__)
 
 @state_bp.route("/state", methods=["GET"])
 def get_state_blueprint():
     """
     Gibt den gespeicherten system_state.json-Inhalt direkt zurück.
-    Wird über Blueprint registriert, um Render-Caching zu umgehen.
+    Verwendet automatisch den persistenten Speicher (/data), falls vorhanden.
     """
     try:
-        STATE_FILE = "system_state.json"  # falls global definiert, kann diese Zeile entfallen
+        # 🗄️ Persistenter oder lokaler Pfad
+        STATE_FILE = "/data/system_state.json" if os.path.exists("/data/system_state.json") else "system_state.json"
+
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 state = json.load(f)
@@ -39,19 +42,37 @@ def get_state_blueprint():
         else:
             return jsonify({
                 "status": "missing",
-                "message": "Keine gespeicherte system_state.json gefunden."
+                "message": f"Keine gespeicherte system_state.json gefunden unter {STATE_FILE}."
             }), 404
+
     except Exception as e:
         return jsonify({
             "status": "error",
             "message": f"Fehler beim Laden des gespeicherten Zustands: {e}"
         }), 500
 
+
 # Blueprint registrieren
 app.register_blueprint(state_bp)
 
 # --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
+
+# --- 🗄️ Persistenter Speicher aktivieren (Render-kompatibel) ---
+PERSIST_PATH = "/data/system_state.json"
+if os.path.exists("/data"):
+    try:
+        if os.path.exists(PERSIST_PATH):
+            STATE_FILE = PERSIST_PATH
+            print(f"💾 Persistenter STATE_FILE gefunden: {STATE_FILE}")
+        else:
+            with open(PERSIST_PATH, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            STATE_FILE = PERSIST_PATH
+            print(f"💾 Neuer persistenter STATE_FILE angelegt: {STATE_FILE}")
+    except Exception as e:
+        print(f"[WARN] Konnte /data nicht nutzen ({e}) – temporärer Speicher aktiv.")
+
 
 
 # --- 🧩 SYSTEMSTATUS (Laufzeitdaten) ---
@@ -156,32 +177,7 @@ def status():
     }), 200
 
 
-# --- ✅ DIREKTE ZUSTANDSABFRAGE ---
-@app.route("/state", methods=["GET"])
-def get_state():
-    """
-    Gibt den kompletten gespeicherten system_state.json-Inhalt direkt zurück.
-    Nützlich für externe Tools (Startup Manager, Gatekeeper, etc.).
-    """
-    try:
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                state = json.load(f)
-            return jsonify({
-                "status": "ok",
-                "message": "Gespeicherter Zustand erfolgreich abgerufen.",
-                "state": state
-            }), 200
-        else:
-            return jsonify({
-                "status": "missing",
-                "message": "Keine gespeicherte system_state.json gefunden."
-            }), 404
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Fehler beim Laden des gespeicherten Zustands: {e}"
-        }), 500
+
 
 
 
