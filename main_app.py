@@ -9,14 +9,50 @@ import shutil
 import tempfile
 import subprocess
 from werkzeug.utils import secure_filename
+
 print("🆕 Flask backend reloaded – state endpoint active.")
 
+# Flask-App erstellen
+app = Flask(__name__)
+
+# --- ✅ STATE ENDPOINT via Blueprint ---
+from flask import Blueprint
+
+state_bp = Blueprint('state_bp', __name__)
+
+@state_bp.route("/state", methods=["GET"])
+def get_state_blueprint():
+    """
+    Gibt den gespeicherten system_state.json-Inhalt direkt zurück.
+    Wird über Blueprint registriert, um Render-Caching zu umgehen.
+    """
+    try:
+        STATE_FILE = "system_state.json"  # falls global definiert, kann diese Zeile entfallen
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            return jsonify({
+                "status": "ok",
+                "message": "Gespeicherter Zustand erfolgreich abgerufen (Blueprint).",
+                "state": state
+            }), 200
+        else:
+            return jsonify({
+                "status": "missing",
+                "message": "Keine gespeicherte system_state.json gefunden."
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Fehler beim Laden des gespeicherten Zustands: {e}"
+        }), 500
+
+# Blueprint registrieren
+app.register_blueprint(state_bp)
 
 # --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
 
-# --- ⚙️ FLASK-APP INITIALISIEREN ---
-app = Flask(__name__)
 
 # --- 🧩 SYSTEMSTATUS (Laufzeitdaten) ---
 system_status = {
