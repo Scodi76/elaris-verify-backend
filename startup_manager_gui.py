@@ -1,13 +1,17 @@
-# 🧠 Elaris Startup Manager – Vollversion mit ACL-Check, Baseline-Update & Signaturstatus
-# Version: v5.7 (Reset-Anzeige-Reset-Button hinzugefügt)
-# Pfad: C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\startup_manager_gui.py
-
+import sys
+import os
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
-import subprocess, json, os, webbrowser, hashlib, shutil, sys, zipfile
+import subprocess, json, webbrowser, hashlib, shutil, zipfile
 from pathlib import Path
 import datetime
 from signature_guard import verify_signatures_before_start
+
+# 🪄 Konsole unterdrücken (optional)
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, 'w')
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, 'w')
 
 
 
@@ -783,11 +787,6 @@ def create_integrity_block():
         return False
 
 
-# --- AUTOMATISCHEN INTEGRITÄTSBLOCK STARTEN ---
-# Diese Zeile sollte am Ende deiner Initialisierungsroutine (nach ACL/Baseline) aufgerufen werden:
-create_integrity_block()
-
-
 # ======================================================
 # 🚀 Gatekeeper starten
 # ======================================================
@@ -990,9 +989,52 @@ log_output.pack(padx=10, pady=10, fill="both", expand=True)
 tk.Button(window, text="❌ Beenden", command=window.destroy,
           bg="#333333", fg="white", font=("Segoe UI", 11, "bold"), width=16).pack(pady=(0, 12))
 
+# --- Initial-Log ---
 append_log("🧠 Elaris Startup Manager geladen.\n➡️ Systembereit.")
+
+# ======================================================
+# 🛰️ Automatischer Sync mit Verify-Backend (Render)
+# ======================================================
+import subprocess
+
+def run_sync():
+    """Sendet beim Start einen Status-Sync an das Verify-Backend (silent)."""
+    try:
+        sync_script = r"C:\Users\mnold_t1ohvc3\Documents\neue_KI_chatGPT_Elaris\Elairs_gatekeeper\sync_startup.ps1"
+        if os.path.exists(sync_script):
+            result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle", "Hidden",
+                    "-ExecutionPolicy", "Bypass",
+                    "-File", sync_script
+                ],
+                capture_output=True, text=True, encoding="utf-8", errors="ignore",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+            append_log("🛰️ Sync-Startskript ausgeführt (Verify-Backend synchronisiert).")
+            if result.stdout.strip():
+                append_log(f"✅ Sync-Antwort: {result.stdout.strip()}")
+            if result.stderr.strip():
+                append_log(f"⚠️ Sync-Fehler: {result.stderr.strip()}")
+        else:
+            append_log(f"⚠️ Sync-Skript nicht gefunden: {sync_script}")
+    except Exception as e:
+        append_log(f"[WARN] Sync konnte nicht ausgeführt werden: {e}")
+
+
+# --- Sync automatisch beim Start ausführen ---
+run_sync()
+
+# --- Nachgelagerte Statusprüfungen ---
 verify_ntfs_permissions()
 update_signature_status()
+
+# Jetzt erst Integritätsblock erzeugen (nach ACL/Baseline/Status)
+create_integrity_block()
+
 
 
 # ======================================================
