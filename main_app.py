@@ -126,6 +126,15 @@ def status():
         "system_state": system_status
     }), 200
 
+# ===========================================================
+# 🧩 ALIAS /getStatus (für GPT-Connector-Kompatibilität)
+# ===========================================================
+@app.route("/getStatus", methods=["GET"])
+def get_status_alias():
+    """Alias für /status – kompatibel mit GPT-Connector"""
+    return status()
+
+
 
 # ===========================================================
 # 🧩 VERIFY – Prüfung von HS/KoDa/Integrität
