@@ -5,6 +5,33 @@
 import os
 import time
 from pathlib import Path
+import requests
+from integrity_check_local import check_file
+import json
+from datetime import datetime
+
+STATUS_FILE = Path("system_status.json")
+
+def load_status():
+    if not STATUS_FILE.exists():
+        return {
+            "hs_verified": False,
+            "koda_verified": False,
+            "integrity_verified": False,
+            "activation_status": "pending",
+            "last_update": None
+        }
+    with open(STATUS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_status(new_data: dict):
+    status = load_status()
+    status.update(new_data)
+    status["last_update"] = datetime.now().isoformat(timespec="seconds")
+    with open(STATUS_FILE, "w", encoding="utf-8") as f:
+        json.dump(status, f, indent=4, ensure_ascii=False)
+
+
 
 # ---------- Konfiguration / Geheimnisse ----------
 ORIGIN_SENTENCE = os.environ.get(
@@ -464,10 +491,11 @@ def handle_input(user: str):
             print("Bitte HS_Final.txt hochladen.")
             return
 
-        # HS-Prüfung -> PASS-Block
         hs_pass_block()
         STATE["hs_pass_done"] = True
+        save_status({"hs_verified": True})
         return
+
 
     # FREIGABE-DIALOG nach KoDa
     if u == "KoDa ist jetzt geladen":
@@ -476,6 +504,7 @@ def handle_input(user: str):
             print("→ Bitte gib jetzt exakt ein:")
             print("„Beginne jetzt die Freigabe“")
             STATE["koda_loaded"] = True
+            save_status({"koda_verified": True})
         else:
             print_standard_einzeiler()
         return
@@ -527,11 +556,38 @@ def handle_input(user: str):
 
     if u == "Starte Integritätsprüfung":
         if STATE["after_re"] and session_gate_for_koda() and session_gate_for_hs():
-            trigger3_success_block()
-            STATE["integrity_done"] = True
+            print("Integritätsprüfung wird gestartet...")
+
+            try:
+                # Lokaler Integrity-Check
+                result = check_file("HS_Final_embedded_v3.py")
+                verified = result.get("verified", False)
+
+                # Rückmeldung an Backend
+                requests.post(
+                    "https://bubaline-dalilah-sappiest.ngrok-free.dev/sync",
+                    json={
+                        "source": "gatekeeper",
+                        "status": "integrity_verified" if verified else "integrity_failed",
+                        "timestamp": result.get("timestamp")
+                    },
+                    timeout=5
+                )
+
+                if verified:
+                    trigger3_success_block()
+                    STATE["integrity_done"] = True
+                    save_status({"integrity_verified": True, "activation_status": "ready"})
+                else:
+                    print("❌ Integritätsprüfung fehlgeschlagen. Bitte HS-Datei prüfen.")
+                    save_status({"integrity_verified": False, "activation_status": "error"})
+            except Exception as e:
+                print(f"[FEHLER] Integritätsprüfung oder Sync fehlgeschlagen: {e}")
+
         else:
             print("Voraussetzungen nicht erfüllt.")
         return
+
 
     if u == "VERIFY-BLOCK v1":
         if STATE["integrity_done"]:
