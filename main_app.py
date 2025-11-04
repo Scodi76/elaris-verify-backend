@@ -975,6 +975,7 @@ def root():
             "/reset"
         ]
     }), 200
+print("✅ /state Endpoint erfolgreich registriert.")
 
 
 
