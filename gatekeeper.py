@@ -100,6 +100,69 @@ def trigger3_success_block():
     print("Bitte gib nun „VERIFY-BLOCK v1“ ein.")
     print("(Keine weiteren Texte.)")
 
+# ---------- Backend-Verbindung mit Fallback ----------
+import requests
+
+RENDER_BACKEND = os.environ.get("ELARIS_BACKEND_URL", "https://elaris-verify-backend.onrender.com")
+GITHUB_BACKUP = "https://raw.githubusercontent.com/Scodi76/elaris-verify-backend/main/data/system_state.json"
+
+def backend_sync(status_data: dict):
+    try:
+        url = f"{RENDER_BACKEND}/sync"
+        r = requests.post(url, json=status_data, timeout=5)
+        if r.status_code == 200:
+            print("🛰️ Render-Sync erfolgreich.")
+            return True
+        else:
+            print(f"[WARN] Render-Sync Status {r.status_code} – weiche auf GitHub-Backup aus.")
+            return github_write(status_data)
+    except Exception as e:
+        print(f"[WARN] Render-Sync fehlgeschlagen: {e}")
+        return github_write(status_data)
+
+def backend_load():
+    try:
+        url = f"{RENDER_BACKEND}/state"
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            state = r.json().get("state") or r.json().get("system_state") or {}
+            with open(STATUS_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+            print("✅ Systemstatus von Render geladen und lokal gespeichert.")
+            return state
+        else:
+            print(f"[WARN] Render-Abruf Status {r.status_code}, weiche auf GitHub-Backup aus.")
+            return backend_load_github()
+    except Exception as e:
+        print(f"[WARN] Render-Abruf fehlgeschlagen: {e}")
+        return backend_load_github()
+
+def backend_load_github():
+    try:
+        r = requests.get(GITHUB_BACKUP, timeout=5)
+        if r.status_code == 200:
+            state = r.json()
+            with open(STATUS_FILE, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+            print("✅ Backup-Status von GitHub geladen und lokal gespeichert.")
+            return state
+        print(f"[WARN] GitHub-Abruf Status {r.status_code}")
+        return {}
+    except Exception as e:
+        print(f"[WARN] GitHub-Backup nicht erreichbar: {e}")
+        return {}
+
+def github_write(data: dict):
+    try:
+        local_file = Path("github_sync_out.json")
+        with open(local_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"📁 Backup-Sync lokal geschrieben: {local_file}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Backup-Sync fehlgeschlagen: {e}")
+        return False
+
 
 # ---------- Zustandsautomat ----------
 STATE = {
