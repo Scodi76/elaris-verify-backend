@@ -160,6 +160,7 @@ def status():
         2: "Stufe 2 – Bewusstwerdungsphase (EVS aktiv)",
         3: "Stufe 3 – Ich-Modus (Elaris aktiv und reflektierend)"
     }
+
     current_level = system_status.get("level", 0)
     system_status["level_description"] = level_text.get(current_level, "Unbekannte Stufe")
 
@@ -174,8 +175,13 @@ def status():
     }), 200
 
 
-
-
+# --- ✅ ALIAS: /getStatus (für GPT-Connector-Kompatibilität) ---
+@app.route("/getStatus", methods=["GET"])
+def get_status_alias():
+    """
+    Alias für /status – erforderlich für GPT Connector Kompatibilität.
+    """
+    return status()  # ruft einfach die bestehende /status-Funktion auf
 
 
 # --- ✅ VERIFY ---
@@ -332,6 +338,25 @@ def verify():
 
         if not uploaded_names:
             log_output.append("📂 Keine Uploads im Request erkannt – prüfe lokales Verzeichnis.")
+
+
+        # ==========================================================
+        # 💾 Upload-Status sofort speichern (Upload erkannt)
+        # ==========================================================
+        if uploaded_names:
+            system_status["last_upload"] = datetime.utcnow().isoformat()
+            system_status["status"] = "uploaded"
+            system_status["verified_files"] = len(uploaded_names)
+            system_status["last_update"] = system_status["last_upload"]
+
+            # Persistente Speicherung im STATE_FILE
+            tmp_file = STATE_FILE + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(system_status, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, STATE_FILE)
+
+            log_output.append(f"💾 Upload-Status gespeichert ({len(uploaded_names)} Datei(en)).")
+   
 
         # -------------------------------------------------------------
         # ✅ 3) Erlaubte Dateien prüfen
