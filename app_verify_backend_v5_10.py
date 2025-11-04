@@ -9,6 +9,8 @@ import shutil
 import tempfile
 import subprocess
 from werkzeug.utils import secure_filename
+print("🆕 Flask backend reloaded – state endpoint active.")
+
 
 # --- 🔐 ZUSTANDSDATEI ---
 STATE_FILE = "system_state.json"
@@ -944,6 +946,7 @@ def root():
 
 
 
-# --- MAIN ---
 if __name__ == "__main__":
+    print("🚀 Local debug mode – running Flask directly.")
     app.run(host="0.0.0.0", port=10000)
+
