@@ -265,6 +265,16 @@ def root():
 
 
 # ===========================================================
+# 🧩 BACKWARD COMPATIBILITY – alte Connector-URL (/verify-backend)
+# ===========================================================
+@app.route("/elaris-verify-backend.onrender.com/getStatus", methods=["GET"])
+def legacy_get_status():
+    """Alias für alte GPT-Connector-URL"""
+    return status()
+
+
+
+# ===========================================================
 # 🧠 START
 # ===========================================================
 if __name__ == "__main__":
