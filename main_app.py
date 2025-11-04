@@ -935,6 +935,7 @@ def root():
         "status": "online",
         "available_endpoints": [
             "/status",
+            "/state",
             "/verify",
             "/set_key",       # 🔐 Neu hinzugefügt
             "/trigger",
