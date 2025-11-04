@@ -1,1 +1,1 @@
-﻿web: gunicorn app_verify_backend_v5_10:app --bind 0.0.0.0: --timeout 120
+﻿web: gunicorn app_verify_backend_v5_10:app --bind 0.0.0.0:$PORT --timeout 120
