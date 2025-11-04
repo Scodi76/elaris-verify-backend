@@ -272,7 +272,13 @@ def legacy_get_status():
     """Alias für alte GPT-Connector-URL"""
     return status()
 
-
+# ===========================================================
+# 🧩 BACKWARD COMPATIBILITY – alter Connector-Pfad (/status)
+# ===========================================================
+@app.route("/elaris-verify-backend.onrender.com/status", methods=["GET"])
+def legacy_status():
+    """Alias für alte GPT-Connector-URL (/status)"""
+    return status()
 
 # ===========================================================
 # 🧠 START
